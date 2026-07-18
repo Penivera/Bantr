@@ -6,6 +6,9 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from app.core.config import settings
 from app.core.dependencies import get_container
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -38,8 +41,8 @@ def create_app(lifespan=None) -> FastAPI:
             update = Update.model_validate(data)
             container = get_container()
             await container.bot.feed_update(update)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("webhook_update_failed", error=str(exc))
         return PlainTextResponse("ok")
 
     @app.get("/status")

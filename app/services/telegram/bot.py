@@ -646,8 +646,14 @@ class TelegramBot:
             await self.dp.start_polling(self.bot, handle_signals=False)
         else:
             url = f"{settings.app_webhook_url.rstrip('/')}/webhook"
-            await self.bot.set_webhook(url=url, drop_pending_updates=True)
-            logger.info("webhook_registered", url=url)
+            if not settings.app_webhook_url:
+                logger.error("webhook_url_not_set", error="APP_WEBHOOK_URL is empty, webhook cannot be registered")
+            else:
+                try:
+                    await self.bot.set_webhook(url=url, drop_pending_updates=True)
+                    logger.info("webhook_registered", url=url)
+                except Exception as exc:
+                    logger.error("webhook_registration_failed", url=url, error=str(exc))
 
     async def stop_async(self) -> None:
         if not settings.app_debug and self.bot:

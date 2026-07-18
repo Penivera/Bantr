@@ -9,6 +9,7 @@ from app.core.constants import (
 )
 from app.core.logging import get_logger
 from app.services.betting.polls import PollManager, PlayerPoll, poll_manager
+from app.services.betting.players import PLAYER_ACTION_TYPES, PARTICIPANT_TO_TEAM
 
 logger = get_logger(__name__)
 
@@ -177,20 +178,37 @@ class BetEngine:
                 continue
             seen.add(bet["id"])
 
-            # Player-specific bets → trigger confirmation poll
+            # Player-specific bets → auto-resolve if player ID available, else trigger poll
             player = bet.get("player")
             player_market = bet.get("player_market")
             if player and player_market and event.type in ("goal", "card"):
                 if bet.get("team") and event.team and bet["team"] != event.team:
-                    continue  # event is for wrong team
-                existing_polls = [p for p in poll_manager._polls.values()
-                                  if p.bet_id == bet["id"] and not p.resolved]
+                    continue
+
+                # Auto-resolve if the stream gave us player info
+                if event.raw and event.raw.fixture_player_id:
+                    confirmed = bet.get("confirmed_events", 0) + 1
+                    self.active_bets[bet["id"]]["confirmed_events"] = confirmed
+                    required = PLAYER_MARKET_REQUIRED_EVENTS.get(player_market, 1)
+                    try:
+                        await self.bot.send_message(bet["chat_id"],
+                            f"\u26bd {event.type.upper()} by Player#{event.raw.fixture_player_id}\n"
+                            f"*{player}* progress: {confirmed}/{required}")
+                    except Exception: pass
+                    if required > 0 and confirmed >= required:
+                        self.store.update_bet(bet["id"],
+                            {"status": BET_STATUS_RESOLVED, "winner": bet["creator"]})
+                        self.active_bets.pop(bet["id"], None)
+                    continue
+
+                # No player ID — fall back to community confirmation
+                existing_polls = poll_manager.active_for_bet(bet["id"])
                 if existing_polls:
-                    continue  # already an active poll for this bet
+                    continue
                 poll = poll_manager.create(
                     bet_id=bet["id"], chat_id=bet["chat_id"],
                     player=player, event_type=event.type,
-                    event_description=f"{event.type.upper()} detected",
+                    event_description=f"{event.type.upper()} detected (P{event.raw.participant})",
                     participants=[bet["creator"], bet.get("opponent", "")],
                 )
                 try:
@@ -200,10 +218,8 @@ class BetEngine:
                         f"\u2705 Yes ({len(poll.votes_yes)})  \u274c No ({len(poll.votes_no)})\n"
                         f"Tap below to vote:",
                     )
-                    # Trigger poll keyboard via bot
                     await self._send_poll_keyboard(bet["chat_id"], poll)
-                except Exception:
-                    pass
+                except Exception: pass
                 continue
 
             allowed_events = MARKET_TO_EVENT.get(bet["market"], [])

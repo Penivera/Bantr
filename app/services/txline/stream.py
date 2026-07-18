@@ -37,6 +37,9 @@ class ScoreEventRaw:
     status_id: int | None = None
     game_state: str | None = None
     stats: dict[str, int] = field(default_factory=dict)
+    participant: int | None = None
+    fixture_player_id: int | None = None
+    player_name: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -193,15 +196,18 @@ class TxLineStreamClient:
 
     async def _handle_payload(self, payload: dict) -> None:
         raw = ScoreEventRaw(
-            fixture_id=str(payload.get("fixtureId", payload.get("fixture_id", ""))),
-            action=payload.get("action"),
-            seq=payload.get("seq") or payload.get("Seq"),
-            ts=payload.get("ts") or payload.get("Ts"),
+            fixture_id=str(payload.get("FixtureId", payload.get("fixtureId", payload.get("fixture_id", "")))),
+            action=payload.get("Action", payload.get("action")),
+            seq=payload.get("Seq", payload.get("seq")),
+            ts=payload.get("Ts", payload.get("ts")),
             period=payload.get("period"),
             phase=payload.get("phase"),
-            status_id=payload.get("statusId"),
-            game_state=payload.get("gameState"),
-            stats=payload.get("stats", {}),
+            status_id=payload.get("StatusId", payload.get("statusId")),
+            game_state=payload.get("GameState", payload.get("gameState")),
+            stats={str(k): v for k, v in (payload.get("Stats", payload.get("stats", {}))).items()} if payload.get("Stats") or payload.get("stats") else {},
+            participant=payload.get("Participant"),
+            fixture_player_id=payload.get("FixturePlayerId") or payload.get("fixturePlayerId"),
+            player_name=payload.get("Player") or payload.get("player"),
             raw=payload,
         )
         fid = raw.fixture_id
