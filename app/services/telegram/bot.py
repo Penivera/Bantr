@@ -5,9 +5,10 @@ from aiogram.types import (
     KeyboardButton, CallbackQuery,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+import re
 from app.core.config import settings
 from app.core.constants import (
-    VALID_MARKETS, UPCOMING_FIXTURES,
+    VALID_MARKETS, UPCOMING_FIXTURES, MARKET_MATCH_WINNER,
     BET_STATUS_RESOLVED, BET_STATUS_VOID, flag_for,
 )
 from app.core.logging import get_logger
@@ -18,20 +19,21 @@ HELP_TEXT = """\U0001f4d6 *Available Commands*
 
 \U0001f4c5 /fixtures — View upcoming matches
 \U0001f3af /track — Select which fixture to bet on
-\U0001f4b0 /bet @user <market> <amount> \\[player/team] — Challenge someone
+\U0001f4b0 /bet @user <market> <amount> \\[team] — Challenge someone
 \u2705 /call <bet_id> — Accept a pending bet
 \U0001f3c6 /leaderboard — View rankings
+
+*Markets:* next_goal, next_card, next_corner, match_winner
 
 \U0001f9e0 *Natural Language*
 You can also just chat naturally — I understand:
 
-\u2022 "Bet 50 on the next goal"
+\u2022 "I bet @alex \\$10 France wins today"
 \u2022 "Show today's matches"
-\u2022 "Track the France game"
 \u2022 "Challenge @alex to 20 on the next corner"
 \u2022 "Accept bet abc123"
 
-I'll figure it out and do the right thing."""
+*Match winner* resolves at full time \u2014 winner takes the pot."""
 
 REPLY_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
@@ -168,7 +170,7 @@ class TelegramBot:
 
     # ── /bet ──
 
-    async def cmd_bet(self, message: types.Message) -> None:
+    async def cmd_bet(self, message: types.Message, parsed_args: list[str] | None = None) -> None:
         engine = self.container.engine
         store = self.container.store
         payments = self.container.payments
@@ -176,7 +178,7 @@ class TelegramBot:
         chat_id = message.chat.id
         username = self._username(message)
 
-        args = message.text.split()[1:] if message.text else []
+        args = parsed_args if parsed_args is not None else (message.text.split()[1:] if message.text else [])
         if len(args) < 3:
             await self._reply(
                 message,
@@ -206,23 +208,31 @@ class TelegramBot:
             await self._reply(message, f"Unknown market. Use: {', '.join(VALID_MARKETS)}")
             return
 
+        if market_str == MARKET_MATCH_WINNER and not raw_extra:
+            await self._reply(message, "For match_winner, specify which team: /bet @user match_winner 50 France")
+            return
+
         resolved_team = None
         player_name = None
         team_note = ""
 
         if raw_extra:
-            info = engine.fixture_info.get(fid, {})
-            resolved = await nlu.resolve_player_team(raw_extra, info)
-            if resolved:
-                resolved_team = resolved
-                home = info.get("home", "home")
-                away = info.get("away", "away")
-                team_name = home if resolved == "home" else away
-                player_name = raw_extra
-                team_note = f"\n{player_name} \u2192 {team_name} (AI-resolved)"
-            else:
+            if market_str == MARKET_MATCH_WINNER:
                 resolved_team = raw_extra
-                team_note = f"\nResolves on: {resolved_team}"
+                team_note = f"\nBacking: {resolved_team} to win"
+            else:
+                info = engine.fixture_info.get(fid, {})
+                resolved = await nlu.resolve_player_team(raw_extra, info)
+                if resolved:
+                    resolved_team = resolved
+                    home = info.get("home", "home")
+                    away = info.get("away", "away")
+                    team_name = home if resolved == "home" else away
+                    player_name = raw_extra
+                    team_note = f"\n{player_name} \u2192 {team_name} (AI-resolved)"
+                else:
+                    resolved_team = raw_extra
+                    team_note = f"\nResolves on: {resolved_team}"
 
         bet = store.create_bet({
             "chat_id": chat_id, "creator": username, "opponent": opponent,
@@ -237,14 +247,16 @@ class TelegramBot:
             engine.active_bets[bet["id"]]["payment_reference"] = pay_req["reference"]
 
             tracked = self._tracked_label(chat_id) or "?"
+            resolve_note = "Resolves at full time \u2014 winner takes all." if market_str == MARKET_MATCH_WINNER else ""
             msg = (
-                f"\U0001f525 {username} challenges {opponent}!\n"
+                f"{opponent} \U0001f525 {username} challenges you!\n"
                 f"{tracked} | {market_str} | Stake: {amount}"
-                f"{team_note}\n\n"
-                f"Accept with /call `{bet['id'][:4]}`\n"
-                f"\U0001f4b3 Pay: {pay_req['transaction_request_url']}"
+                f"{team_note}\n"
+                f"{resolve_note}\n\n"
+                f"\U0001f4b3 {username}: {pay_req['transaction_request_url']}\n\n"
+                f"Accept: /call <code>{bet['id'][:4]}</code>"
             )
-            await self._reply(message, msg, parse_mode="Markdown")
+            await message.answer(msg, parse_mode="HTML")
         except Exception as e:
             await self._reply(message, f"Bet created but payment setup failed: {e}")
 
@@ -282,7 +294,17 @@ class TelegramBot:
         if partial in engine.active_bets:
             engine.active_bets[partial]["status"] = "called"
 
-        await self._reply(message, f"\u2705 {username} accepted the bet. It's locked. May the best banter win.")
+        # Generate opponent's join_bet payment link
+        try:
+            opp_pay = await payments.generate_payment_request(entry, instruction="join_bet")
+            await self._reply(
+                message,
+                f"{entry['creator']} \u2705 {username} accepted!\n"
+                f"\U0001f4b3 {username}: {opp_pay['transaction_request_url']}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await self._reply(message, f"\u2705 {username} accepted the bet! (payment link failed: {e})")
         ref = entry.get("payment_reference")
         if ref:
             payments.watch_for_deposit(ref, lambda confirmed: self._on_deposit(chat_id, partial, confirmed))
@@ -305,7 +327,10 @@ class TelegramBot:
     # ── Callback handler ──
 
     async def handle_callback(self, callback: CallbackQuery) -> None:
-        await callback.answer()
+        try:
+            await callback.answer()
+        except Exception:
+            pass  # query too old — ignore gracefully
         data = callback.data or ""
 
         if data == "menu:fixtures":
@@ -368,21 +393,77 @@ class TelegramBot:
                 reply_markup=_inline_menu(),
             )
 
+        elif data.startswith("menu:bet_build:"):
+            market = data.split(":", 2)[2]
+            await callback.message.edit_text(
+                f"Market: {market}\n\n"
+                f"Now type:\n"
+                f"/bet @opponent {market} &lt;amount&gt; [team]\n\n"
+                f"Example: /bet @alice {market} 50 France",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="\U0001f519 Back", callback_data="menu:start")],
+                ]),
+            )
+
     # ── NLU handler ──
 
     async def handle_nlu(self, message: types.Message) -> None:
         text = message.text or ""
-        if text.startswith("/"):
+        text = re.sub(r'@\w+bot\b', '', text, flags=re.IGNORECASE).strip()
+        if not text or text.startswith("/"):
+            return
+
+        # Cheap pre-filter: only invoke the model for bet-like messages
+        bet_triggers = ("bet", "wager", "challenge", "stake", "$", "win", "lose", "beat", "score", "card", "corner", "goal")
+        command_triggers = ("fixture", "match", "leaderboard", "ranking", "track", "help")
+        looks_like_bet = any(kw in text.lower() for kw in bet_triggers)
+        looks_like_cmd = any(kw in text.lower() for kw in command_triggers)
+        if not looks_like_bet and not looks_like_cmd:
             return
 
         engine = self.container.engine
         fixtures_ctx = [{"id": fid, **info} for fid, info in engine.fixture_info.items()]
-        parsed = await self.container.nlu.parse(text, fixtures_ctx)
-        if parsed.get("confidence", 0) < 0.5:
-            return
+
+        if looks_like_bet and not looks_like_cmd:
+            parsed = await self.container.nlu.parse(text, fixtures_ctx)
+        else:
+            parsed = await self.container.nlu.parse(text, fixtures_ctx)
 
         intent = parsed.get("intent", "unknown")
         params = parsed.get("params", {})
+        confidence = parsed.get("confidence", 0)
+
+        # If bet-like but NLU failed, offer manual bet builder
+        bet_keywords = ("bet", "wager", "challenge", "stake", "$", "win", "lose", "beat")
+        looks_like_bet = any(kw in text.lower() for kw in bet_keywords)
+        if confidence < 0.4 and looks_like_bet:
+            fid = engine.chat_fixtures.get(message.chat.id)
+            if not fid:
+                available = [f for f in UPCOMING_FIXTURES if f["id"] in engine.fixture_info]
+                if available:
+                    await message.answer(
+                        "\U0001f3af *Pick a match first!*",
+                        parse_mode="Markdown",
+                        reply_markup=_fixture_keyboard(available),
+                    )
+                return
+            await message.answer(
+                "\U0001f4b0 *AI is taking a nap — build your bet manually:*\n\n"
+                "Use /bet @user <market> <amount> [team]\n"
+                f"Markets: next_goal, next_card, next_corner, match_winner",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="next_goal", callback_data="menu:bet_build:next_goal"),
+                     InlineKeyboardButton(text="next_card", callback_data="menu:bet_build:next_card")],
+                    [InlineKeyboardButton(text="next_corner", callback_data="menu:bet_build:next_corner"),
+                     InlineKeyboardButton(text="match_winner", callback_data="menu:bet_build:match_winner")],
+                    [InlineKeyboardButton(text="\U0001f519 Cancel", callback_data="menu:start")],
+                ]),
+            )
+            return
+
+        if confidence < 0.4:
+            return
 
         try:
             if intent == "fixtures":
@@ -402,12 +483,18 @@ class TelegramBot:
                 market = params.get("market", "")
                 amount = params.get("amount", "")
                 if opponent and market and amount:
-                    parts = [opponent, market, amount]
+                    args = [opponent, market, amount]
                     player = params.get("player", "")
                     if player:
-                        parts.append(player)
-                    message.text = "/bet " + " ".join(parts)
-                    await self.cmd_bet(message)
+                        args.append(player)
+                    team = params.get("team", "")
+                    if market == "match_winner" and team:
+                        args.append(team)
+                    await self.cmd_bet(message, parsed_args=args)
+                elif opponent and not amount:
+                    await self._reply(message, f"Got it — {opponent} is the opponent. How much are you betting? Try: /bet {opponent} next_goal 50")
+                elif opponent and not market:
+                    await self._reply(message, f"Got {opponent} — what market? Try: /bet {opponent} next_goal 50")
                 else:
                     await self._reply(message, "Couldn't parse that. Try: /bet @user next_goal 50")
             elif intent == "call":
@@ -440,10 +527,18 @@ class TelegramBot:
         r.message.register(self.cmd_fixtures, Command("fixtures"))
         r.message.register(self.cmd_track, Command("track"))
         r.message.register(self.cmd_bet, Command("bet"))
+        r.message.register(self.cmd_bet, Command("ref"))
+        r.message.register(self.cmd_bet, Command("bantr"))
         r.message.register(self.cmd_call, Command("call"))
         r.message.register(self.cmd_leaderboard, Command("leaderboard"))
         r.callback_query.register(self.handle_callback, F.data.startswith("menu:"))
-        r.message.register(self.handle_nlu, F.text)
+
+        @r.message()
+        async def debug_all(msg: types.Message):
+            logger.info("message_received", chat_id=msg.chat.id, text=msg.text[:80] if msg.text else None,
+                         from_user=msg.from_user.username if msg.from_user else None,
+                         chat_type=msg.chat.type)
+            await self.handle_nlu(msg)
 
     async def start_async(self) -> None:
         self.bot = Bot(token=settings.telegram_bot_token)

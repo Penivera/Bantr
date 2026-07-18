@@ -1,125 +1,35 @@
 {% extends "base.html" %}
-{% block title %}BanterBot — Live World Cup Betting{% endblock %}
+{% block title %}Banter — live betting in your group chat{% endblock %}
 
 {% block content %}
 
-<section class="hero" id="hero">
-  <div class="hero-bg">
-    <div class="hero-orb orb-1"></div>
-    <div class="hero-orb orb-2"></div>
-  </div>
-  <div class="hero-content">
-    <h1>Live match betting<br><span class="gradient-text">in your Telegram group</span></h1>
-    <p class="hero-desc">
-      Challenge friends during live matches. Real-time data resolves every bet instantly.
-      Verifiable on-chain proofs. No setup required.
-    </p>
-    <div class="hero-actions">
-      <a href="{{ bot_url }}" class="btn btn-primary">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.66-.52.36-1 .53-1.42.52-.47-.01-1.37-.26-2.03-.48-.82-.27-1.47-.42-1.41-.88.03-.24.37-.49 1.02-.74 4.03-1.76 6.72-2.91 8.06-3.47 3.84-1.6 4.64-1.87 5.16-1.88.11 0 .37.03.54.16.14.11.18.26.2.37.02.11.04.35.02.54z"/></svg>
-        Open Telegram Bot
-      </a>
-      <a href="#commands" class="btn btn-secondary">Commands</a>
-    </div>
-  </div>
-</section>
-
-<div class="metrics-bar">
-  <div class="metric"><span class="metric-value">Real-time</span><span class="metric-label">Live match data via TxLINE SSE</span></div>
-  <div class="metric"><span class="metric-value">On-chain</span><span class="metric-label">Verifiable Merkle proofs on Solana</span></div>
-  <div class="metric"><span class="metric-value">AI Native</span><span class="metric-label">DeepSeek-powered natural language</span></div>
-</div>
-
-<section class="features" id="features">
-  <div class="section-header">
-    <h2>Why BanterBot</h2>
-  </div>
-  <div class="features-grid">
-    {% for f in [
-      ("⚡", "Auto-Settled", "TxLINE live feed resolves bets the moment a goal, card, or corner hits."),
-      ("⛓️", "On-Chain Proof", "Every resolution backed by a verifiable Solana Merkle proof — not 'the bot said so'."),
-      ("🧠", "AI-Powered", "Type naturally. 'I bet @alice 50 on next goal' — DeepSeek understands you."),
-      ("🏆", "Per-Chat Leaderboards", "Each group is its own stakes room. Bragging rights, scoped.")
-    ] %}
-    <div class="feature-card reveal">
-      <span class="feature-icon">{{ f[0] }}</span>
-      <h3>{{ f[1] }}</h3>
-      <p>{{ f[2] }}</p>
-    </div>
-    {% endfor %}
+<section class="hero">
+  <h1>Bet your friends.<br><span class="muted">Live. On-chain. In chat.</span></h1>
+  <p class="lead">
+    Any group chat becomes a stakes room. Post a callout, the live feed settles
+    it the moment the event happens — with a verifiable on-chain proof.
+  </p>
+  <div class="hero-actions">
+    <a href="{{ bot_url }}" class="btn-primary">Open in Telegram</a>
+    <a href="#commands" class="btn-ghost">See commands</a>
   </div>
 </section>
 
 <section class="commands" id="commands">
-  <div class="section-header">
-    <h2>Commands</h2>
-  </div>
-  <div class="commands-table">
+  <div class="commands-card">
     {% for c in [
-      ("/fixtures", "See upcoming matches", "/fixtures"),
-      ("/track &lt;id&gt;", "Pick a fixture to bet on", "/track 18257865"),
-      ("/bet @user market amount [player]", "Challenge someone. AI resolves player→team.", "/bet @alice next_card 50 Mbappe"),
-      ("/call &lt;betId&gt;", "Accept a bet", "/call abc123"),
+      ("/track <id>", "Pick a fixture to bet on", "/track 18257865"),
+      ("/bet @user market amount", "Challenge someone", "/bet @alice next_goal 50"),
+      ("/call <betId>", "Accept a bet", "/call abc123"),
       ("/leaderboard", "Rankings for this chat", "/leaderboard"),
     ] %}
-    <div class="cmd-row reveal">
+    <div class="cmd">
       <code class="cmd-name">{{ c[0] }}</code>
       <span class="cmd-desc">{{ c[1] }}</span>
       <code class="cmd-example">{{ c[2] }}</code>
     </div>
     {% endfor %}
   </div>
-</section>
-
-<section class="how-it-works" id="how-it-works">
-  <div class="section-header">
-    <h2>How It Works</h2>
-  </div>
-  <div class="steps">
-    {% for s in [
-      ("1", "Track a match", "/track <id> to pick a World Cup fixture"),
-      ("2", "Challenge friends", "/bet @rival next_goal 50"),
-      ("3", "AI resolves", "For player bets, DeepSeek maps player→team"),
-      ("4", "Live events settle", "TxLINE SSE stream triggers instant resolution"),
-      ("5", "Proof posted", "Solana Explorer link with Merkle proof in chat"),
-    ] %}
-    <div class="step reveal">
-      <div class="step-number">{{ s[0] }}</div>
-      <h3>{{ s[1] }}</h3>
-      <p>{{ s[2] }}</p>
-    </div>
-    {% endfor %}
-  </div>
-</section>
-
-<section class="faq" id="faq">
-  <div class="section-header">
-    <h2>Quick FAQ</h2>
-  </div>
-  <div class="faq-list">
-    {% for faq in [
-      ("How are bets verified?", "Every resolution includes a Solana Explorer link to a cryptographic Merkle proof. TxLINE anchors score data on-chain. Anyone can independently verify."),
-      ("Can I bet on players?", "TxLINE tracks team-level events only. When you name a player (e.g. Mbappe), DeepSeek resolves which team they're on. Both parties agree on the mapping. The bot resolves on the team event."),
-      ("Is it free?", "Yes. World Cup free tier on TxLINE devnet + DeepSeek V4 Flash Free. You only need ~0.05 SOL for the on-chain subscribe transaction.")
-    ] %}
-    <div class="faq-item reveal">
-      <button class="faq-question" onclick="this.parentElement.classList.toggle('open')">
-        <span>{{ faq[0] }}</span>
-        <span class="faq-chevron">▾</span>
-      </button>
-      <div class="faq-answer"><p>{{ faq[1] }}</p></div>
-    </div>
-    {% endfor %}
-  </div>
-</section>
-
-<section class="cta-bottom">
-  <h2>Ready to start?</h2>
-  <p>Add the bot to your group, track a match, and challenge your friends.</p>
-  <a href="{{ bot_url }}" class="btn btn-primary btn-lg">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.2-.08-.06-.19-.04-.27-.02-.12.02-1.96 1.25-5.54 3.66-.52.36-1 .53-1.42.52-.47-.01-1.37-.26-2.03-.48-.82-.27-1.47-.42-1.41-.88.03-.24.37-.49 1.02-.74 4.03-1.76 6.72-2.91 8.06-3.47 3.84-1.6 4.64-1.87 5.16-1.88.11 0 .37.03.54.16.14.11.18.26.2.37.02.11.04.35.02.54z"/></svg>
-    Open Telegram Bot
-  </a>
 </section>
 
 {% endblock %}

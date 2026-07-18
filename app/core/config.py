@@ -6,7 +6,7 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str = ""
-    telegram_bot_username: str = "banterbetbot"
+    telegram_bot_username: str = "bantersol_bot"
 
     # Solana
     solana_wallet_secret_key: str = "[]"

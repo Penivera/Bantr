@@ -5,7 +5,7 @@ from app.core.constants import (
     BET_STATUS_OPEN, BET_STATUS_CALLED, BET_STATUS_FUNDED,
     BET_STATUS_RESOLVED, BET_STATUS_VOID,
     VALID_MARKETS, MARKET_NEXT_GOAL, MARKET_NEXT_CARD, MARKET_NEXT_CORNER,
-    UPCOMING_FIXTURES,
+    MARKET_MATCH_WINNER, UPCOMING_FIXTURES,
 )
 from app.core.logging import get_logger
 
@@ -15,12 +15,14 @@ MARKET_LABELS = {
     MARKET_NEXT_GOAL: "next goal",
     MARKET_NEXT_CARD: "next card",
     MARKET_NEXT_CORNER: "next corner",
+    MARKET_MATCH_WINNER: "match winner",
 }
 
 MARKET_TO_EVENT = {
     MARKET_NEXT_GOAL: ["goal"],
     MARKET_NEXT_CARD: ["card"],
     MARKET_NEXT_CORNER: ["corner"],
+    MARKET_MATCH_WINNER: ["score_update"],  # resolved manually at game_finalised
 }
 
 
@@ -83,19 +85,63 @@ class BetEngine:
         import asyncio
         asyncio.ensure_future(self._resolve_event(event))
 
+    def _determine_match_winner(self, bet: dict, final_stats: dict) -> str | None:
+        info = self.fixture_info.get(bet["fixture_id"], {})
+        home = info.get("home", "").lower()
+        away = info.get("away", "").lower()
+        bet_team = (bet.get("team") or "").lower()
+        p1 = int(final_stats.get("1", 0))
+        p2 = int(final_stats.get("2", 0))
+        if p1 == p2:
+            return None
+        winning_name = home if p1 > p2 else away
+        winning_side = "home" if p1 > p2 else "away"
+        if bet_team in (home, away):
+            return "creator_team" if bet_team == winning_name else "opponent_team"
+        if bet_team in ("home", "away"):
+            return "creator_team" if bet_team == winning_side else "opponent_team"
+        return None
+
     async def _resolve_event(self, event) -> None:
         raw = event.raw.raw if event.raw else {}
         if raw.get("action") == "game_finalised":
-            to_void = [bid for bid, b in self.active_bets.items()
-                       if b["fixture_id"] == event.fixture_id
-                       and b["status"] not in (BET_STATUS_RESOLVED, BET_STATUS_VOID)]
-            for bid in to_void:
-                bet = self.active_bets.pop(bid, None)
-                if bet:
+            final_stats = raw.get("stats", {})
+
+            for bid, bet in list(self.active_bets.items()):
+                if bet["fixture_id"] != event.fixture_id:
+                    continue
+                if bet["status"] in (BET_STATUS_RESOLVED, BET_STATUS_VOID):
+                    continue
+
+                if bet["market"] == MARKET_MATCH_WINNER:
+                    winner_team = self._determine_match_winner(bet, final_stats)
+                    if winner_team:
+                        winner_user = bet["creator"] if winner_team == "creator_team" else bet.get("opponent")
+                        self.store.update_bet(bid, {"status": BET_STATUS_RESOLVED, "winner": winner_user})
+                        loser = bet.get("opponent") if winner_user == bet["creator"] else bet["creator"]
+                        msg = (
+                            f"\U0001f3c6 {winner_user} wins! "
+                            f"Match result settled.\n"
+                            f"{loser}, you owe a round."
+                        )
+                        try:
+                            await self.bot.send_message(bet["chat_id"], msg)
+                        except Exception:
+                            pass
+                    else:
+                        self.store.update_bet(bid, {"status": BET_STATUS_VOID})
+                        try:
+                            await self.bot.send_message(bet["chat_id"],
+                                f"\u26d4 Match finished but winner couldn't be determined. Bet voided.")
+                        except Exception:
+                            pass
+                    self.active_bets.pop(bid, None)
+                else:
                     self.store.update_bet(bid, {"status": BET_STATUS_VOID})
+                    self.active_bets.pop(bid, None)
                     try:
                         await self.bot.send_message(bet["chat_id"],
-                            f"\u26d4 Bet {bid} voided \u2014 match ended without resolution.")
+                            f"\u26d4 Match ended \u2014 bet `{bid[:4]}` voided without resolution.")
                     except Exception:
                         pass
             return

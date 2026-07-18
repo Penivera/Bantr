@@ -6,22 +6,13 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-SYSTEM_PROMPT = """You are a betting bot command parser for a Telegram group. Users place wagers on live football matches.
+SYSTEM_PROMPT = """Parse betting messages into JSON. Output ONLY JSON, no other text.
 
-Parse the user's message into a JSON object with:
-- "intent": one of "bet", "call", "fixtures", "track", "leaderboard", "unknown"
-- "params": a flat key→string map of extracted parameters
-- "confidence": 0.0–1.0
+Intents: bet, call, fixtures, track, leaderboard, unknown.
 
-Intent rules:
-- "bet": Extract opponent (@user or name), market (next_goal/next_card/next_corner), amount (number). If a player name is mentioned, extract it as "player". Important: if a player is mentioned and the known fixture teams include that player's known national team, set "player_team" to the corresponding side ("home" or "away").
-- "call": Extract betId
-- "fixtures": User wants to see matches
-- "track": Extract fixtureId
-- "leaderboard": User wants rankings
-- "unknown": Cannot determine intent
+For "bet": opponent(@user), market(next_goal/next_card/next_corner/match_winner), amount(number), team(optional), player(optional). "win" or "will beat" = match_winner. Strip $ from amounts.
 
-Output ONLY valid JSON, no other text."""
+Example: {"intent":"bet","params":{"opponent":"@alice","market":"match_winner","amount":"10","team":"France"},"confidence":0.95}"""
 
 
 class NLUParser:
@@ -37,7 +28,7 @@ class NLUParser:
         system_msg = SYSTEM_PROMPT + context_str
 
         try:
-            async with httpx.AsyncClient(timeout=8) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     settings.ai_deepseek_api_base,
                     json={
@@ -46,9 +37,9 @@ class NLUParser:
                             {"role": "system", "content": system_msg},
                             {"role": "user", "content": text},
                         ],
-                        "temperature": 0.1,
-                        "max_tokens": 256,
-                    },
+                    "temperature": 0.1,
+                    "max_tokens": 2048,
+                },
                     headers={
                         "Content-Type": "application/json",
                         "Authorization": f"Bearer {settings.ai_deepseek_api_key}",
@@ -59,7 +50,7 @@ class NLUParser:
                 if match:
                     return json.loads(match.group())
         except Exception as e:
-            logger.warning("nlu_parse_failed", error=str(e))
+            logger.warning("nlu_parse_failed", error=str(e), type=type(e).__name__)
 
         return {"intent": "unknown", "params": {}, "confidence": 0}
 
@@ -82,7 +73,7 @@ class NLUParser:
                             {"role": "user", "content": prompt},
                         ],
                         "temperature": 0.0,
-                        "max_tokens": 256,
+                        "max_tokens": 512,
                     },
                     headers={
                         "Content-Type": "application/json",

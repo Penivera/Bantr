@@ -71,7 +71,7 @@ async def _ensure_token_account(keypair: Keypair) -> None:
     user_pubkey = keypair.pubkey()
     ata = get_associated_token_address(user_pubkey, mint, TOKEN_2022_PROGRAM_ID)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(settings.solana_rpc_url, json={
             "jsonrpc": "2.0", "id": 1,
             "method": "getAccountInfo",
@@ -149,7 +149,7 @@ async def subscribe_on_chain(keypair: Keypair) -> str:
 
     ix = Instruction(program_id=program_id, accounts=accounts, data=data)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         blockhash_resp = await client.post(settings.solana_rpc_url, json={
             "jsonrpc": "2.0", "id": 1,
             "method": "getLatestBlockhash",

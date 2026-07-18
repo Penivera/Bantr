@@ -3,52 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <meta name="description" content="Live World Cup betting in your Telegram group. On-chain verified. AI-powered. Zero setup.">
-  <title>{% block title %}BanterBot{% endblock %}</title>
+  <meta name="description" content="Banter — live betting in your group chat.">
+  <title>{% block title %}Banter{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/style.css">
   {% block head %}{% endblock %}
 </head>
 <body>
-  <nav class="navbar" id="navbar">
-    <div class="nav-inner">
-      <a href="#" class="nav-logo">
-        <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="13" stroke="var(--accent)" stroke-width="2"/><path d="M10 20V8l10 6-10 6z" fill="var(--accent)"/></svg>
-        <span>BanterBot</span>
-      </a>
-      <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
-        <span></span><span></span><span></span>
-      </button>
-      <div class="nav-links" id="navLinks">
-        <a href="#features">Features</a>
-        <a href="#how-it-works">How It Works</a>
-        <a href="#commands">Commands</a>
-        <a href="#faq">FAQ</a>
-        <a href="{{ bot_url }}" class="nav-cta">Open Telegram</a>
-        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
-          <span class="theme-icon-dark">☀</span>
-          <span class="theme-icon-light">☾</span>
-        </button>
-      </div>
+  <nav class="nav">
+    <a href="/" class="brand">
+      <svg width="22" height="22" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="13" stroke="var(--accent)" stroke-width="2"/><path d="M10 20V8l10 6-10 6z" fill="var(--accent)"/></svg>
+      <span>Banter</span>
+    </a>
+    <div class="nav-right">
+      <a href="#commands" class="nav-link">Commands</a>
+      <a href="{{ bot_url }}" class="btn-ghost">Open in Telegram</a>
     </div>
   </nav>
 
-  <main>{% block content %}{% endblock %}</main>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
 
   <footer class="footer">
-    <div class="footer-inner">
-      <div class="footer-brand">
-        <strong>BanterBot</strong>
-        <p>Live World Cup betting in your Telegram group. On-chain verified, AI-powered, zero setup.</p>
-      </div>
-      <div class="footer-links">
-        <a href="{{ bot_url }}">Telegram Bot</a>
-        <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
-      </div>
-      <div class="footer-copy">&copy; 2026 BanterBot</div>
-    </div>
+    <span>Banter</span>
+    <span class="dot">·</span>
+    <a href="{{ bot_url }}">Telegram</a>
+    <span class="dot">·</span>
+    <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
   </footer>
 
   <script src="/static/js/main.js"></script>

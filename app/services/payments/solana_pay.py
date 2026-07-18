@@ -15,7 +15,9 @@ BET_ESCROW_DISCRIMINATOR = bytes([198, 247, 82, 132, 85, 253, 182, 140])
 
 
 def derive_bet_pda(bet_id: str) -> tuple[Pubkey, int]:
-    bid = int(bet_id)
+    # Hash the bet ID string to a u64 for PDA derivation
+    import hashlib
+    bid = int(hashlib.sha256(bet_id.encode()).hexdigest()[:16], 16) % (2**64)
     buf = struct.pack("<Q", bid)
     return Pubkey.find_program_address([b"bet", buf], PROGRAM_ID)
 
@@ -45,12 +47,12 @@ class SolanaPayService:
         pda, _ = derive_vault_pda(Pubkey.from_string(bet_pda))
         return str(pda)
 
-    async def generate_payment_request(self, bet: dict) -> dict:
-        market_map = {"next_goal": "1", "next_card": "2", "next_corner": "3"}
+    async def generate_payment_request(self, bet: dict, instruction: str = "initialize_bet") -> dict:
+        market_map = {"next_goal": "1", "next_card": "2", "next_corner": "3", "match_winner": "4"}
         market = market_map.get(bet.get("market", "next_goal"), "1")
         deadline = default_deadline()
 
-        url = build_transaction_request_url("initialize_bet", {
+        url = build_transaction_request_url(instruction, {
             "bet_id": bet["id"],
             "fixture_id": bet.get("fixture_id", ""),
             "market": market,
