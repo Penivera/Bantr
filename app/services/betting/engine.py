@@ -5,9 +5,10 @@ from app.core.constants import (
     BET_STATUS_OPEN, BET_STATUS_CALLED, BET_STATUS_FUNDED,
     BET_STATUS_RESOLVED, BET_STATUS_VOID,
     VALID_MARKETS, MARKET_NEXT_GOAL, MARKET_NEXT_CARD, MARKET_NEXT_CORNER,
-    MARKET_MATCH_WINNER, UPCOMING_FIXTURES,
+    MARKET_MATCH_WINNER, UPCOMING_FIXTURES, PLAYER_MARKET_REQUIRED_EVENTS,
 )
 from app.core.logging import get_logger
+from app.services.betting.polls import PollManager, PlayerPoll, poll_manager
 
 logger = get_logger(__name__)
 
@@ -102,6 +103,19 @@ class BetEngine:
             return "creator_team" if bet_team == winning_side else "opponent_team"
         return None
 
+    async def _send_poll_keyboard(self, chat_id: int, poll: PlayerPoll) -> None:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"\u2705 Yes ({len(poll.votes_yes)})",
+                                  callback_data=f"poll:vote:{poll.poll_id}:yes"),
+             InlineKeyboardButton(text=f"\u274c No ({len(poll.votes_no)})",
+                                  callback_data=f"poll:vote:{poll.poll_id}:no")],
+        ])
+        try:
+            await self.bot.send_message(chat_id, "Vote:", reply_markup=kb)
+        except Exception:
+            pass
+
     async def _resolve_event(self, event) -> None:
         raw = event.raw.raw if event.raw else {}
         if raw.get("action") == "game_finalised":
@@ -128,22 +142,28 @@ class BetEngine:
                             await self.bot.send_message(bet["chat_id"], msg)
                         except Exception:
                             pass
+                elif bet.get("player"):
+                    confirmed = bet.get("confirmed_events", 0)
+                    required = PLAYER_MARKET_REQUIRED_EVENTS.get(bet.get("player_market", "scores"), 1)
+                    if required > 0 and confirmed >= required:
+                        winner_user = bet["creator"]
+                        self.store.update_bet(bid, {"status": BET_STATUS_RESOLVED, "winner": winner_user})
+                        try: await self.bot.send_message(bet["chat_id"],
+                            f"\U0001f3c6 {bet['player']} bet won! {confirmed}/{required} events confirmed.")
+                        except Exception: pass
                     else:
                         self.store.update_bet(bid, {"status": BET_STATUS_VOID})
-                        try:
-                            await self.bot.send_message(bet["chat_id"],
-                                f"\u26d4 Match finished but winner couldn't be determined. Bet voided.")
-                        except Exception:
-                            pass
+                        try: await self.bot.send_message(bet["chat_id"],
+                            f"\u26d4 {bet['player']} bet lost — only {confirmed}/{required} events confirmed.")
+                        except Exception: pass
                     self.active_bets.pop(bid, None)
                 else:
                     self.store.update_bet(bid, {"status": BET_STATUS_VOID})
                     self.active_bets.pop(bid, None)
                     try:
                         await self.bot.send_message(bet["chat_id"],
-                            f"\u26d4 Match ended \u2014 bet `{bid[:4]}` voided without resolution.")
-                    except Exception:
-                        pass
+                            f"\u26d4 Match ended — bet `{bid[:4]}` voided without resolution.")
+                    except Exception: pass
             return
 
         open_bets = self.store.get_open_bets(event.fixture_id)
@@ -156,6 +176,36 @@ class BetEngine:
             if bet["id"] in seen or bet["status"] in (BET_STATUS_RESOLVED, BET_STATUS_VOID):
                 continue
             seen.add(bet["id"])
+
+            # Player-specific bets → trigger confirmation poll
+            player = bet.get("player")
+            player_market = bet.get("player_market")
+            if player and player_market and event.type in ("goal", "card"):
+                if bet.get("team") and event.team and bet["team"] != event.team:
+                    continue  # event is for wrong team
+                existing_polls = [p for p in poll_manager._polls.values()
+                                  if p.bet_id == bet["id"] and not p.resolved]
+                if existing_polls:
+                    continue  # already an active poll for this bet
+                poll = poll_manager.create(
+                    bet_id=bet["id"], chat_id=bet["chat_id"],
+                    player=player, event_type=event.type,
+                    event_description=f"{event.type.upper()} detected",
+                    participants=[bet["creator"], bet.get("opponent", "")],
+                )
+                try:
+                    await self.bot.send_message(bet["chat_id"],
+                        f"\u26bd {event.type.upper()}!\n\n"
+                        f"Was this {player}?\n\n"
+                        f"\u2705 Yes ({len(poll.votes_yes)})  \u274c No ({len(poll.votes_no)})\n"
+                        f"Tap below to vote:",
+                    )
+                    # Trigger poll keyboard via bot
+                    await self._send_poll_keyboard(bet["chat_id"], poll)
+                except Exception:
+                    pass
+                continue
+
             allowed_events = MARKET_TO_EVENT.get(bet["market"], [])
             if event.type not in allowed_events:
                 continue

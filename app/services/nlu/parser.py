@@ -19,39 +19,42 @@ class NLUParser:
     async def parse(self, text: str, fixture_context: list[dict] | None = None) -> dict:
         context_str = ""
         if fixture_context:
-            lines = [
-                f"  - {f['id']}: {f.get('home', '?')} vs {f.get('away', '?')} ({f.get('stage', '?')})"
-                for f in fixture_context
-            ]
+            lines = [f"  - {f['id']}: {f.get('home','?')} vs {f.get('away','?')} ({f.get('stage','?')})" for f in fixture_context]
             context_str = "\nKnown fixtures (use home/away for player_team):\n" + "\n".join(lines)
 
         system_msg = SYSTEM_PROMPT + context_str
 
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    settings.ai_deepseek_api_base,
-                    json={
-                        "model": settings.ai_deepseek_model,
-                        "messages": [
-                            {"role": "system", "content": system_msg},
-                            {"role": "user", "content": text},
-                        ],
-                    "temperature": 0.1,
-                    "max_tokens": 2048,
-                },
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {settings.ai_deepseek_api_key}",
-                    },
-                )
-                raw = resp.json()["choices"][0]["message"]["content"]
-                match = re.search(r"\{[\s\S]*\}", raw)
-                if match:
-                    return json.loads(match.group())
-        except Exception as e:
-            logger.warning("nlu_parse_failed", error=str(e), type=type(e).__name__)
+        models = [settings.ai_deepseek_model] + [m.strip() for m in settings.ai_fallback_models.split(",") if m.strip()]
 
+        for model in models:
+            try:
+                result = await self._call_model(model, system_msg, text)
+                if result and result.get("confidence", 0) >= 0.4:
+                    logger.info("nlu_parsed", model=model, intent=result.get("intent"))
+                    return result
+                logger.info("nlu_low_confidence", model=model, confidence=result.get("confidence", 0))
+            except Exception as e:
+                logger.warning("nlu_model_failed", model=model, error=str(e)[:60])
+
+        return {"intent": "unknown", "params": {}, "confidence": 0}
+
+    async def _call_model(self, model: str, system_msg: str, user_msg: str) -> dict:
+        import re, json
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                settings.ai_deepseek_api_base,
+                json={"model": model, "messages": [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ], "temperature": 0.1, "max_tokens": 2048},
+                headers={"Content-Type": "application/json",
+                         "Authorization": f"Bearer {settings.ai_deepseek_api_key}"})
+            raw = resp.json()["choices"][0]["message"]["content"]
+            if not raw:
+                raw = resp.json()["choices"][0]["message"].get("reasoning_content", "")
+            match = re.search(r"\{[\s\S]*\}", raw)
+            if match:
+                return json.loads(match.group())
         return {"intent": "unknown", "params": {}, "confidence": 0}
 
     async def resolve_player_team(self, player_name: str, fixture_info: dict) -> str | None:

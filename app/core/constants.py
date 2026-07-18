@@ -57,6 +57,22 @@ def flag_for(team: str) -> str:
 
 HEARTBEAT_GRACE_SECONDS: int = 120
 
+PLAYER_MARKETS: dict[str, str] = {
+    "hat trick": "hat_trick", "hattrick": "hat_trick", "hat-trick": "hat_trick",
+    "first scorer": "first_scorer", "first goal": "first_scorer", "scores first": "first_scorer",
+    "two goals": "two_goals", "brace": "two_goals", "2 goals": "two_goals",
+    "scores": "scores", "score": "scores", "goal": "scores",
+    "card": "player_card", "booked": "player_card", "red card": "player_card",
+    "clean sheet": "clean_sheet", "cleansheet": "clean_sheet",
+}
+
+PLAYER_MARKET_REQUIRED_EVENTS: dict[str, int] = {
+    "hat_trick": 3, "two_goals": 2, "first_scorer": 1,
+    "scores": 1, "player_card": 1, "clean_sheet": 0,
+}
+
+POLL_TIMEOUT_SECONDS: int = 90
+
 
 def default_deadline() -> int:
     return int((datetime.now(timezone.utc) + timedelta(days=DEFAULT_BET_DEADLINE_DAYS)).timestamp())

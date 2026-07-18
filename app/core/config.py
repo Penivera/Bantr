@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     ai_deepseek_api_base: str = "https://opencode.ai/zen/v1/chat/completions"
     ai_deepseek_api_key: str = "sk-vxOw6vyM8FDBZzgNl79WQ8OhunqBQiNNiGeXXOMeccsZ3p91afScgYo9dSvLJJtW"
     ai_deepseek_model: str = "deepseek-v4-flash-free"
+    ai_fallback_models: str = "mimo-v2.5-free,north-mini-code-free,nemotron-3-ultra-free"
 
     # BetEscrow
     bet_escrow_program_id: str = "vaFdYpqXffc1QXpL1AauMpvAknBNjrdZYExMQg6wvgM"
