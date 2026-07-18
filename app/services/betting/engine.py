@@ -389,9 +389,9 @@ class BetEngine:
                     headers={"Authorization": f"Bearer {jwt}", "X-Api-Token": api_token},
                 )
                 if resp.status_code == 200:
-                    for f in UPCOMING_FIXTURES:
-                        if f["id"] == fid:
-                            return f
+                    info = self.fixture_info.get(fid)
+                    if info:
+                        return info
                     return {"id": fid, "home": "?", "away": "?", "stage": "?", "time_utc": "?"}
         except Exception:
             pass

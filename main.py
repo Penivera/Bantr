@@ -21,16 +21,16 @@ async def lifespan(app):
     engine = container.engine
     await engine.restore_from_redis()
 
-    logger.info("validating_fixtures")
-    for f in (
-        {"id": "18257865", "home": "France", "away": "England", "time_utc": "2026-07-18T21:00:00Z", "stage": "3rd Place Final"},
-        {"id": "18257739", "home": "Spain", "away": "Argentina", "time_utc": "2026-07-19T19:00:00Z", "stage": "Final"},
-    ):
-        info = await engine.validate_fixture(f["id"])
-        if info:
-            engine.fixture_info[f["id"]] = info
-            engine._ensure_tracked(f["id"])
-    logger.info("fixtures_validated", count=len(engine.fixture_info))
+    logger.info("fetching_fixtures")
+    from app.services.txline.fixtures import fetch_fixtures
+    api_fixtures = await fetch_fixtures(container.credentials)
+    allowed_ids = [x.strip() for x in settings.app_fixture_ids.split(",") if x.strip()] if settings.app_fixture_ids else []
+    for f in api_fixtures:
+        if allowed_ids and f["id"] not in allowed_ids:
+            continue
+        engine.fixture_info[f["id"]] = f
+        engine._ensure_tracked(f["id"])
+    logger.info("fixtures_loaded", count=len(engine.fixture_info))
 
     asyncio.create_task(container.stream.start())
     asyncio.create_task(container.bot.start_async())

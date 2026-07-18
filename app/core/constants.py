@@ -19,10 +19,7 @@ MARKET_MATCH_WINNER: str = "match_winner"
 PLAYER_MARKET_VALUES: tuple[str, ...] = ("hat_trick", "first_scorer", "two_goals", "player_card", "scores", "clean_sheet")
 VALID_MARKETS: tuple[str, ...] = (MARKET_NEXT_GOAL, MARKET_NEXT_CARD, MARKET_NEXT_CORNER, MARKET_MATCH_WINNER) + PLAYER_MARKET_VALUES
 
-UPCOMING_FIXTURES: list[dict] = [
-    {"id": "18257865", "home": "France", "away": "England", "time_utc": "2026-07-18T21:00:00Z", "stage": "3rd Place Final"},
-    {"id": "18257739", "home": "Spain", "away": "Argentina", "time_utc": "2026-07-19T19:00:00Z", "stage": "Final"},
-]
+UPCOMING_FIXTURES: list[dict] = []
 
 BET_STATUS_OPEN: str = "open"
 BET_STATUS_CALLED: str = "called"

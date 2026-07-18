@@ -57,7 +57,8 @@ def _fixture_label(f: dict) -> str:
     return f"{flag_for(f['home'])} {f['home']} vs {flag_for(f['away'])} {f['away']}"
 
 
-def _fixture_keyboard(available: list[dict]) -> InlineKeyboardMarkup:
+def _fixture_keyboard(available) -> InlineKeyboardMarkup:
+    available = list(available)
     builder = InlineKeyboardBuilder()
     for f in available:
         builder.button(text=_fixture_label(f), callback_data=f"menu:track:{f['id']}")
@@ -226,7 +227,7 @@ class TelegramBot:
 
     async def cmd_fixtures(self, message: types.Message) -> None:
         engine = self.container.engine
-        available = [f for f in UPCOMING_FIXTURES if f["id"] in engine.fixture_info]
+        available = engine.fixture_info.values()
         if not available:
             await self._reply(message, "No upcoming fixtures available.")
             return
@@ -242,7 +243,7 @@ class TelegramBot:
 
     async def cmd_track(self, message: types.Message, command=None) -> None:
         engine = self.container.engine
-        available = [f for f in UPCOMING_FIXTURES if f["id"] in engine.fixture_info]
+        available = engine.fixture_info.values()
         if not available:
             await self._reply(message, "No upcoming fixtures available.")
             return
@@ -430,7 +431,7 @@ class TelegramBot:
 
         if data == "menu:fixtures":
             engine = self.container.engine
-            available = [f for f in UPCOMING_FIXTURES if f["id"] in engine.fixture_info]
+            available = engine.fixture_info.values()
             if not available:
                 await callback.message.edit_text("No upcoming fixtures available.", reply_markup=_inline_menu())
                 return

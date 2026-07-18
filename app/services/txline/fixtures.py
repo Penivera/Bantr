@@ -9,7 +9,10 @@ logger = get_logger(__name__)
 
 # GameState flags documented in the TxLINE "Fetching Snapshots" reference.
 GAME_STATE_SCHEDULED = 1
+GAME_STATE_FINISHED = 3
 GAME_STATE_CANCELLED = 6
+
+FINISHED_STATES = {GAME_STATE_FINISHED, GAME_STATE_CANCELLED}
 
 
 def _normalize_fixture(raw: dict[str, Any]) -> dict | None:
@@ -20,7 +23,7 @@ def _normalize_fixture(raw: dict[str, Any]) -> dict | None:
 
     # Skip cancelled/voided fixtures; only scheduled (and any live state) matter.
     game_state = raw.get("GameState") or raw.get("gameState")
-    if game_state == GAME_STATE_CANCELLED:
+    if game_state in FINISHED_STATES:
         return None
 
     p1 = raw.get("Participant1") or "?"
