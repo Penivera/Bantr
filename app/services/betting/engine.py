@@ -69,12 +69,13 @@ class BetStore:
 
 
 class BetEngine:
-    def __init__(self, store: BetStore, stream, bot, payments, nlu):
+    def __init__(self, store: BetStore, stream, bot, payments, nlu, redis_store=None):
         self.store = store
         self.stream = stream
         self.bot = bot
         self.payments = payments
         self.nlu = nlu
+        self.redis = redis_store
         self.active_bets: dict[str, dict] = {}
         self.chat_fixtures: dict[int, str] = {}
         self.fixture_info: dict[str, dict] = {}
@@ -83,11 +84,34 @@ class BetEngine:
         self.all_players_by_fixture: dict[str, list[dict]] = {}
         self._rosters_fetching: set[str] = set()
         from app.services.betting.broadcaster import MatchBroadcaster
-        self.broadcaster = MatchBroadcaster(bot, self)
+        self.broadcaster = MatchBroadcaster(bot, self, redis_store=redis_store)
+
+    async def restore_from_redis(self) -> None:
+        if not self.redis:
+            return
+        try:
+            chat_fixtures = await self.redis.get_all_chat_fixtures()
+            self.chat_fixtures = chat_fixtures
+            tracked = await self.redis.get_all_tracked()
+            self.tracked = tracked
+            for fid in tracked:
+                self.stream.on_match_event(fid, self._on_event)
+            verbosities = await self.redis.get_all_verbosities()
+            for chat_id, level in verbosities.items():
+                self.broadcaster.set_verbosity(chat_id, level)
+            logger.info("redis_restored", chats=len(chat_fixtures), tracked=len(tracked))
+        except Exception as e:
+            logger.warning("redis_restore_failed", error=str(e))
 
     def fixture_label(self, fid: str) -> str:
         info = self.fixture_info.get(fid, {})
         return f"{info.get('home', '?')} vs {info.get('away', '?')}"
+
+    def track_fixture_for_chat(self, chat_id: int, fid: str) -> None:
+        self.chat_fixtures[chat_id] = fid
+        self._ensure_tracked(fid)
+        if self.redis:
+            asyncio.ensure_future(self.redis.set_chat_fixture(chat_id, fid))
 
     def _ensure_tracked(self, fid: str) -> None:
         if fid in self.tracked:
@@ -95,6 +119,8 @@ class BetEngine:
         self.tracked.add(fid)
         self.stream.on_match_event(fid, self._on_event)
         asyncio.ensure_future(self._fetch_rosters(fid))
+        if self.redis:
+            asyncio.ensure_future(self.redis.add_tracked(fid))
 
     async def _fetch_rosters(self, fid: str) -> None:
         if fid in self._rosters_fetching:

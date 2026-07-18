@@ -446,8 +446,7 @@ class TelegramBot:
             engine = self.container.engine
             info = engine.fixture_info.get(fid)
             if info:
-                engine.chat_fixtures[callback.message.chat.id] = fid
-                engine._ensure_tracked(fid)
+                engine.track_fixture_for_chat(callback.message.chat.id, fid)
                 f = {"home": info["home"], "away": info["away"]}
                 await callback.message.edit_text(
                     f"\U0001f3ae Tracking *{_fixture_label(f)}*\nPlace your bets with /bet!",

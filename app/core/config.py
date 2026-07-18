@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     app_fixture_ids: str = "18257865,18257739"
     app_debug: bool = True
     app_webhook_url: str = ""
+    app_redis_url: str = "redis://localhost:6379"
 
 
 settings = Settings()

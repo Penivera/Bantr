@@ -19,6 +19,8 @@ async def lifespan(app):
     await container.initialize()
 
     engine = container.engine
+    await engine.restore_from_redis()
+
     logger.info("validating_fixtures")
     for f in (
         {"id": "18257865", "home": "France", "away": "England", "time_utc": "2026-07-18T21:00:00Z", "stage": "3rd Place Final"},
@@ -35,6 +37,8 @@ async def lifespan(app):
     logger.info("web_dashboard", url=f"http://localhost:{settings.app_web_port}")
     yield
     logger.info("banterbot_shutting_down")
+    if container.redis:
+        await container.redis.disconnect()
     os._exit(0)
 
 

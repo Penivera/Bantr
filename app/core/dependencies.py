@@ -6,6 +6,7 @@ from app.services.telegram.bot import TelegramBot
 from app.services.payments.solana_pay import SolanaPayService
 from app.services.nlu.parser import NLUParser
 from app.services.betting.engine import BetEngine, BetStore
+from app.services.state.redis_store import RedisStore
 
 
 @dataclass
@@ -17,15 +18,19 @@ class AppContainer:
     nlu: NLUParser | None = None
     engine: BetEngine | None = None
     store: BetStore = field(default_factory=BetStore)
+    redis: RedisStore | None = None
 
     async def initialize(self) -> None:
         from app.core.security import WALLET, WALLET_PUBKEY
+        self.redis = RedisStore()
+        await self.redis.connect()
+
         self.credentials = await bootstrap_credentials(WALLET)
         self.stream = TxLineStreamClient(self.credentials)
         self.bot = TelegramBot(self)
         self.payments = SolanaPayService()
         self.nlu = NLUParser()
-        self.engine = BetEngine(self.store, self.stream, self.bot, self.payments, self.nlu)
+        self.engine = BetEngine(self.store, self.stream, self.bot, self.payments, self.nlu, redis_store=self.redis)
 
 
 _container: AppContainer | None = None

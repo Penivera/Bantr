@@ -51,15 +51,18 @@ def format_score(raw: dict) -> tuple[int, int]:
 
 
 class MatchBroadcaster:
-    def __init__(self, bot, engine):
+    def __init__(self, bot, engine, redis_store=None):
         self.bot = bot
         self.engine = engine
+        self.redis = redis_store
         self.verbosity: dict[int, str] = {}
         self._last_seq: dict[str, int] = {}
-        self._broadcasted_actions: dict[str, set[str]] = {}
 
     def set_verbosity(self, chat_id: int, level: str) -> None:
         self.verbosity[chat_id] = level
+        if self.redis:
+            import asyncio
+            asyncio.ensure_future(self.redis.set_verbosity(chat_id, level))
 
     def get_verbosity(self, chat_id: int) -> str:
         return self.verbosity.get(chat_id, VERBOSITY_STANDARD)
@@ -81,6 +84,9 @@ class MatchBroadcaster:
         if seq <= last:
             return True
         self._last_seq[fixture_id] = seq
+        if self.redis:
+            import asyncio
+            asyncio.ensure_future(self.redis.set_last_seq(fixture_id, seq))
         return False
 
     async def broadcast(self, event) -> None:
