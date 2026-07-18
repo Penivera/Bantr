@@ -10,8 +10,15 @@ SYSTEM_PROMPT = """Parse betting messages into JSON. Output ONLY JSON, no other 
 
 Intents: bet, call, fixtures, track, leaderboard, unknown.
 
-For "bet": opponent(@user), market(next_goal/next_card/next_corner/match_winner), amount(number), team(optional), player(optional). "win" or "will beat" = match_winner. Strip $ from amounts.
+For "bet": opponent(@user), market(next_goal/next_card/next_corner/match_winner/hat_trick/first_scorer/two_goals/scores/player_card/clean_sheet), amount(number), team(optional), player(optional).
 
+Player markets: "hat trick" -> hat_trick, "first goal" / "scores first" -> first_scorer, "two goals" / "brace" -> two_goals, "scores" / "goal" -> scores, "card" / "booked" / "red card" -> player_card, "clean sheet" -> clean_sheet.
+"win" or "will beat" = match_winner. Strip $ from amounts.
+
+If a player name is mentioned (e.g. "Mbappe", "Messi"), set the player field.
+If a team is mentioned without a player (e.g. "France", "Spain"), set the team field.
+
+Example: {"intent":"bet","params":{"opponent":"@alice","market":"hat_trick","amount":"50","player":"Mbappe"},"confidence":0.95}
 Example: {"intent":"bet","params":{"opponent":"@alice","market":"match_winner","amount":"10","team":"France"},"confidence":0.95}"""
 
 

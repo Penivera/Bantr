@@ -1,11 +1,3 @@
-"""Player resolution and matching for BanterBot.
-
-Since TxLINE devnet does not expose a dedicated /fixtures/players endpoint,
-we resolve player bets using:
-  1. AI-driven team mapping (resolve_player_team in NLU)
-  2. Stream event Participant field (1 or 2) + Action types
-  3. Stored fixture_player_id when available from event payload
-"""
 import re
 import unicodedata
 from app.core.logging import get_logger
@@ -14,7 +6,6 @@ logger = get_logger(__name__)
 
 
 def normalize_name(name: str) -> str:
-    """Case-insensitive, accent-insensitive, punctuation-free normalization."""
     name = name.lower().strip()
     name = unicodedata.normalize("NFKD", name)
     name = "".join(c for c in name if not unicodedata.combining(c))
@@ -22,30 +13,55 @@ def normalize_name(name: str) -> str:
     return " ".join(name.split())
 
 
+def _expand_name_tokens(display_name: str) -> set[str]:
+    parts = [p.strip() for p in display_name.split(",")]
+    tokens: set[str] = set()
+    if len(parts) >= 2:
+        surname = parts[0]
+        firstname = parts[1]
+        tokens.add(normalize_name(f"{firstname} {surname}"))
+        tokens.add(normalize_name(surname))
+        tokens.add(normalize_name(firstname))
+        surname_parts = surname.split()
+        firstname_parts = firstname.split()
+        tokens.add(normalize_name(firstname_parts[0] if firstname_parts else firstname))
+        tokens.add(normalize_name(surname_parts[-1] if surname_parts else surname))
+    else:
+        tokens.add(normalize_name(display_name))
+    return tokens
+
+
 def resolve_player_from_roster(user_input: str, roster: list[dict]) -> list[dict]:
-    """Match user-provided player name against a roster of {name, fixturePlayerId, normativeId, ...} entries.
-    Returns a list of matches sorted by confidence."""
     needle = normalize_name(user_input)
+    if not needle:
+        return []
+
     matches = []
 
     for player in roster:
-        display = player.get("preferredName", player.get("name", ""))
-        norm = normalize_name(display)
-        first = norm.split()[-1] if norm.split() else ""
-        last = norm.split()[0] if norm.split() else ""
-        full = norm
+        display = player.get("preferred_name", player.get("preferredName", player.get("name", "")))
+        if not display:
+            continue
+
+        variants = _expand_name_tokens(display)
+        norm_display = normalize_name(display)
 
         score = 0
-        if needle == full:
+
+        if needle == norm_display:
             score = 100
-        elif needle == first:
-            score = 80
-        elif needle == last:
-            score = 80
-        elif needle in full:
+        elif any(needle == v for v in variants):
+            score = 90
+        elif needle in norm_display:
+            score = 70
+        elif any(needle in v and len(needle) >= 3 for v in variants):
             score = 60
-        elif first.startswith(needle) or last.startswith(needle):
+        elif any(v.startswith(needle) and len(needle) >= 3 for v in variants):
+            score = 50
+        elif any(v in needle for v in variants if len(v) >= 3):
             score = 40
+        elif norm_display.startswith(needle) and len(needle) >= 3:
+            score = 35
 
         if score > 0:
             matches.append({**player, "match_score": score, "match_display": display})

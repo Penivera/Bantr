@@ -13,7 +13,6 @@ from app.core.constants import (
     BET_STATUS_RESOLVED, BET_STATUS_VOID,
 )
 from app.core.logging import get_logger
-from app.services.txline.auth import TxLineCredentials
 
 logger = get_logger(__name__)
 
@@ -39,16 +38,22 @@ class ScoreEventRaw:
     stats: dict[str, int] = field(default_factory=dict)
     participant: int | None = None
     fixture_player_id: int | None = None
+    player_normative_id: int | None = None
     player_name: str | None = None
+    player_in_normative_id: int | None = None
+    player_out_normative_id: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class MatchEvent:
     fixture_id: str
-    type: str  # "goal" | "card" | "corner" | "score_update"
+    type: str  # "goal" | "card" | "corner" | "score_update" | "substitution" | "injury"
     team: str | None = None
     timestamp: int = 0
+    player_normative_id: int | None = None
+    player_in_normative_id: int | None = None
+    player_out_normative_id: int | None = None
     raw: ScoreEventRaw | None = None
 
 
@@ -71,6 +76,18 @@ def parse_sse_block(block: str) -> SseMessage | None:
             msg.retry = int(value)
     msg.data = msg.data.rstrip("\n")
     return msg if msg.data or msg.event or msg.id else None
+
+
+def _extract_player_id(data: dict | None, key: str) -> int | None:
+    if not isinstance(data, dict):
+        return None
+    value = data.get(key)
+    if value is not None:
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            pass
+    return None
 
 
 def detect_delta(
@@ -108,15 +125,38 @@ def normalize_event(raw: ScoreEventRaw, prev_stats: dict[str, int] | None = None
     prev = prev_stats or {}
     stats = raw.stats or {}
 
-    if raw.action == "game_finalised":
+    action = raw.action or ""
+
+    if action == "game_finalised":
         return MatchEvent(fixture_id=fid, type="score_update", timestamp=raw.ts or 0, raw=raw)
 
+    if action in ("substitution",) and raw.player_in_normative_id:
+        return MatchEvent(
+            fixture_id=fid, type="substitution", team=f"team_{raw.participant or 0}",
+            timestamp=raw.ts or 0, raw=raw,
+            player_in_normative_id=raw.player_in_normative_id,
+            player_out_normative_id=raw.player_out_normative_id,
+        )
+
     if not stats:
+        if action == "goal" and raw.player_normative_id:
+            return MatchEvent(
+                fixture_id=fid, type="goal", team=f"team_{raw.participant or 0}",
+                timestamp=raw.ts or 0, raw=raw,
+                player_normative_id=raw.player_normative_id,
+            )
+        if action in ("injury",) and raw.player_normative_id:
+            return MatchEvent(
+                fixture_id=fid, type="injury", team=f"team_{raw.participant or 0}",
+                timestamp=raw.ts or 0, raw=raw,
+                player_normative_id=raw.player_normative_id,
+            )
         return MatchEvent(fixture_id=fid, type="score_update", timestamp=raw.ts or 0, raw=raw)
 
     delta = detect_delta(prev, stats)
     if not delta["changed"]:
-        return MatchEvent(fixture_id=fid, type="score_update", timestamp=raw.ts or 0, raw=raw)
+        return MatchEvent(fixture_id=fid, type="score_update", timestamp=raw.ts or 0,
+                          player_normative_id=raw.player_normative_id, raw=raw)
 
     event_type = "score_update"
     team = None
@@ -133,11 +173,12 @@ def normalize_event(raw: ScoreEventRaw, prev_stats: dict[str, int] | None = None
         event_type = "corner"
         team = "team_1" if stats.get(str(STAT_KEY_CORNER_P1), 0) != prev.get(str(STAT_KEY_CORNER_P1), 0) else "team_2"
 
-    return MatchEvent(fixture_id=fid, type=event_type, team=team, timestamp=raw.ts or 0, raw=raw)
+    return MatchEvent(fixture_id=fid, type=event_type, team=team, timestamp=raw.ts or 0,
+                      player_normative_id=raw.player_normative_id, raw=raw)
 
 
 class TxLineStreamClient:
-    def __init__(self, credentials: TxLineCredentials):
+    def __init__(self, credentials):
         self.credentials = credentials
         self.listeners: dict[str, list[Callable[[MatchEvent], None]]] = {}
         self.last_stats: dict[str, dict[str, int]] = {}
@@ -195,6 +236,12 @@ class TxLineStreamClient:
                 await asyncio.sleep(3)
 
     async def _handle_payload(self, payload: dict) -> None:
+        data_field = payload.get("Data", payload.get("data", {}))
+
+        player_normative_id = _extract_player_id(data_field, "PlayerId")
+        player_in_normative_id = _extract_player_id(data_field, "PlayerInId")
+        player_out_normative_id = _extract_player_id(data_field, "PlayerOutId")
+
         raw = ScoreEventRaw(
             fixture_id=str(payload.get("FixtureId", payload.get("fixtureId", payload.get("fixture_id", "")))),
             action=payload.get("Action", payload.get("action")),
@@ -205,9 +252,12 @@ class TxLineStreamClient:
             status_id=payload.get("StatusId", payload.get("statusId")),
             game_state=payload.get("GameState", payload.get("gameState")),
             stats={str(k): v for k, v in (payload.get("Stats", payload.get("stats", {}))).items()} if payload.get("Stats") or payload.get("stats") else {},
-            participant=payload.get("Participant"),
+            participant=data_field.get("Participant") or payload.get("Participant"),
             fixture_player_id=payload.get("FixturePlayerId") or payload.get("fixturePlayerId"),
+            player_normative_id=player_normative_id,
             player_name=payload.get("Player") or payload.get("player"),
+            player_in_normative_id=player_in_normative_id,
+            player_out_normative_id=player_out_normative_id,
             raw=payload,
         )
         fid = raw.fixture_id

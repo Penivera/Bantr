@@ -1,5 +1,6 @@
 import uuid
 import random
+import asyncio
 from typing import Any, Callable
 from app.core.constants import (
     BET_STATUS_OPEN, BET_STATUS_CALLED, BET_STATUS_FUNDED,
@@ -9,7 +10,7 @@ from app.core.constants import (
 )
 from app.core.logging import get_logger
 from app.services.betting.polls import PollManager, PlayerPoll, poll_manager
-from app.services.betting.players import PLAYER_ACTION_TYPES, PARTICIPANT_TO_TEAM
+from app.services.betting.players import PLAYER_ACTION_TYPES, PARTICIPANT_TO_TEAM, resolve_player_from_roster
 
 logger = get_logger(__name__)
 
@@ -18,13 +19,19 @@ MARKET_LABELS = {
     MARKET_NEXT_CARD: "next card",
     MARKET_NEXT_CORNER: "next corner",
     MARKET_MATCH_WINNER: "match winner",
+    "hat_trick": "hat trick",
+    "first_scorer": "first scorer",
+    "two_goals": "two goals",
+    "scores": "scores",
+    "player_card": "player card",
+    "clean_sheet": "clean sheet",
 }
 
 MARKET_TO_EVENT = {
     MARKET_NEXT_GOAL: ["goal"],
     MARKET_NEXT_CARD: ["card"],
     MARKET_NEXT_CORNER: ["corner"],
-    MARKET_MATCH_WINNER: ["score_update"],  # resolved manually at game_finalised
+    MARKET_MATCH_WINNER: ["score_update"],
 }
 
 
@@ -72,6 +79,9 @@ class BetEngine:
         self.chat_fixtures: dict[int, str] = {}
         self.fixture_info: dict[str, dict] = {}
         self.tracked: set[str] = set()
+        self.player_rosters: dict[str, dict[int, dict]] = {}
+        self.all_players_by_fixture: dict[str, list[dict]] = {}
+        self._rosters_fetching: set[str] = set()
 
     def fixture_label(self, fid: str) -> str:
         info = self.fixture_info.get(fid, {})
@@ -82,9 +92,43 @@ class BetEngine:
             return
         self.tracked.add(fid)
         self.stream.on_match_event(fid, self._on_event)
+        asyncio.ensure_future(self._fetch_rosters(fid))
+
+    async def _fetch_rosters(self, fid: str) -> None:
+        if fid in self._rosters_fetching:
+            return
+        self._rosters_fetching.add(fid)
+        try:
+            from app.services.betting.roster import fetch_fixture_roster, build_player_lookup
+            from app.core.dependencies import get_container
+            container = get_container()
+            rosters = await fetch_fixture_roster(fid, container.credentials)
+            if rosters:
+                lookup = build_player_lookup(rosters)
+                self.player_rosters[fid] = lookup
+                all_players = []
+                for team_name, players in rosters.items():
+                    for p in players:
+                        p["team_name"] = team_name
+                        all_players.append(p)
+                self.all_players_by_fixture[fid] = all_players
+                logger.info("rosters_cached", fixture_id=fid, player_count=len(lookup))
+        except Exception as e:
+            logger.error("roster_fetch_error", fixture_id=fid, error=str(e))
+        finally:
+            self._rosters_fetching.discard(fid)
+
+    def get_player_for_fixture(self, fid: str, normative_id: int | None) -> dict | None:
+        if fid in self.player_rosters and normative_id is not None:
+            return self.player_rosters[fid].get(normative_id)
+        return None
+
+    def resolve_player_name(self, fid: str, name: str) -> list[dict]:
+        if fid in self.all_players_by_fixture:
+            return resolve_player_from_roster(name, self.all_players_by_fixture[fid])
+        return []
 
     def _on_event(self, event) -> None:
-        import asyncio
         asyncio.ensure_future(self._resolve_event(event))
 
     def _determine_match_winner(self, bet: dict, final_stats: dict) -> str | None:
@@ -119,6 +163,7 @@ class BetEngine:
 
     async def _resolve_event(self, event) -> None:
         raw = event.raw.raw if event.raw else {}
+
         if raw.get("action") == "game_finalised":
             final_stats = raw.get("stats", {})
 
@@ -143,28 +188,45 @@ class BetEngine:
                             await self.bot.send_message(bet["chat_id"], msg)
                         except Exception:
                             pass
-                elif bet.get("player"):
+                    self.active_bets.pop(bid, None)
+                    continue
+
+                is_player_bet = bool(bet.get("player") or bet.get("player_normative_id"))
+                if is_player_bet:
+                    player_display = bet.get("player_display", bet.get("player", "?"))
                     confirmed = bet.get("confirmed_events", 0)
                     required = PLAYER_MARKET_REQUIRED_EVENTS.get(bet.get("player_market", "scores"), 1)
-                    if required > 0 and confirmed >= required:
-                        winner_user = bet["creator"]
-                        self.store.update_bet(bid, {"status": BET_STATUS_RESOLVED, "winner": winner_user})
-                        try: await self.bot.send_message(bet["chat_id"],
-                            f"\U0001f3c6 {bet['player']} bet won! {confirmed}/{required} events confirmed.")
-                        except Exception: pass
+                    if bet.get("player_market") == "clean_sheet":
+                        self.store.update_bet(bid, {"status": BET_STATUS_RESOLVED, "winner": bet["creator"]})
+                        try:
+                            await self.bot.send_message(bet["chat_id"],
+                                f"\U0001f3c6 {player_display} clean sheet — {bet['creator']} wins!")
+                        except Exception:
+                            pass
+                    elif required > 0 and confirmed >= required:
+                        self.store.update_bet(bid, {"status": BET_STATUS_RESOLVED, "winner": bet["creator"]})
+                        try:
+                            await self.bot.send_message(bet["chat_id"],
+                                f"\U0001f3c6 {player_display}: {confirmed}/{required} — {bet['creator']} wins!")
+                        except Exception:
+                            pass
                     else:
                         self.store.update_bet(bid, {"status": BET_STATUS_VOID})
-                        try: await self.bot.send_message(bet["chat_id"],
-                            f"\u26d4 {bet['player']} bet lost — only {confirmed}/{required} events confirmed.")
-                        except Exception: pass
+                        try:
+                            await self.bot.send_message(bet["chat_id"],
+                                f"\u26d4 {player_display}: only {confirmed}/{required} — bet voided.")
+                        except Exception:
+                            pass
                     self.active_bets.pop(bid, None)
-                else:
-                    self.store.update_bet(bid, {"status": BET_STATUS_VOID})
-                    self.active_bets.pop(bid, None)
-                    try:
-                        await self.bot.send_message(bet["chat_id"],
-                            f"\u26d4 Match ended — bet `{bid[:4]}` voided without resolution.")
-                    except Exception: pass
+                    continue
+
+                self.store.update_bet(bid, {"status": BET_STATUS_VOID})
+                self.active_bets.pop(bid, None)
+                try:
+                    await self.bot.send_message(bet["chat_id"],
+                        f"\u26d4 Match ended — bet `{bid[:4]}` voided without resolution.")
+                except Exception:
+                    pass
             return
 
         open_bets = self.store.get_open_bets(event.fixture_id)
@@ -178,48 +240,45 @@ class BetEngine:
                 continue
             seen.add(bet["id"])
 
-            # Player-specific bets → auto-resolve if player ID available, else trigger poll
-            player = bet.get("player")
-            player_market = bet.get("player_market")
-            if player and player_market and event.type in ("goal", "card"):
-                if bet.get("team") and event.team and bet["team"] != event.team:
+            is_player_bet = bool(bet.get("player") or bet.get("player_normative_id"))
+            player_normative_id = bet.get("player_normative_id")
+
+            if is_player_bet and event.type in ("goal", "card", "substitution", "injury"):
+                event_nid = event.player_normative_id
+                event_team = event.team
+
+                if bet.get("team") and event_team and bet["team"] != event_team:
                     continue
 
-                # Auto-resolve if the stream gave us player info
-                if event.raw and event.raw.fixture_player_id:
-                    confirmed = bet.get("confirmed_events", 0) + 1
-                    self.active_bets[bet["id"]]["confirmed_events"] = confirmed
-                    required = PLAYER_MARKET_REQUIRED_EVENTS.get(player_market, 1)
+                if event_nid and player_normative_id and event_nid == player_normative_id:
+                    self._handle_player_event_confirmed(bet, event)
+                    continue
+
+                if event_nid and player_normative_id is None:
+                    self._handle_player_event_confirmed(bet, event)
+                    continue
+
+                if event_nid is None:
+                    existing_polls = poll_manager.active_for_bet(bet["id"])
+                    if existing_polls:
+                        continue
+                    player_disp = bet.get("player_display", bet.get("player", "?"))
+                    poll = poll_manager.create(
+                        bet_id=bet["id"], chat_id=bet["chat_id"],
+                        player=player_disp, event_type=event.type,
+                        event_description=f"{event.type.upper()} detected (P{event.raw.participant})",
+                        participants=[bet["creator"], bet.get("opponent", "")],
+                    )
                     try:
                         await self.bot.send_message(bet["chat_id"],
-                            f"\u26bd {event.type.upper()} by Player#{event.raw.fixture_player_id}\n"
-                            f"*{player}* progress: {confirmed}/{required}")
-                    except Exception: pass
-                    if required > 0 and confirmed >= required:
-                        self.store.update_bet(bet["id"],
-                            {"status": BET_STATUS_RESOLVED, "winner": bet["creator"]})
-                        self.active_bets.pop(bet["id"], None)
-                    continue
-
-                # No player ID — fall back to community confirmation
-                existing_polls = poll_manager.active_for_bet(bet["id"])
-                if existing_polls:
-                    continue
-                poll = poll_manager.create(
-                    bet_id=bet["id"], chat_id=bet["chat_id"],
-                    player=player, event_type=event.type,
-                    event_description=f"{event.type.upper()} detected (P{event.raw.participant})",
-                    participants=[bet["creator"], bet.get("opponent", "")],
-                )
-                try:
-                    await self.bot.send_message(bet["chat_id"],
-                        f"\u26bd {event.type.upper()}!\n\n"
-                        f"Was this {player}?\n\n"
-                        f"\u2705 Yes ({len(poll.votes_yes)})  \u274c No ({len(poll.votes_no)})\n"
-                        f"Tap below to vote:",
-                    )
-                    await self._send_poll_keyboard(bet["chat_id"], poll)
-                except Exception: pass
+                            f"\u26bd {event.type.upper()}!\n\n"
+                            f"Was this {player_disp}?\n\n"
+                            f"\u2705 Yes ({len(poll.votes_yes)})  \u274c No ({len(poll.votes_no)})\n"
+                            f"Tap below to vote:",
+                        )
+                        await self._send_poll_keyboard(bet["chat_id"], poll)
+                    except Exception:
+                        pass
                 continue
 
             allowed_events = MARKET_TO_EVENT.get(bet["market"], [])
@@ -250,6 +309,38 @@ class BetEngine:
                 await self.bot.send_message(bet["chat_id"], msg)
             except Exception as e:
                 logger.error("resolve_post_failed", error=str(e))
+
+    def _handle_player_event_confirmed(self, bet: dict, event) -> None:
+        bet_id = bet["id"]
+        player_disp = bet.get("player_display", bet.get("player", "?"))
+        confirmed = bet.get("confirmed_events", 0) + 1
+        player_market = bet.get("player_market", "scores")
+        required = PLAYER_MARKET_REQUIRED_EVENTS.get(player_market, 1)
+
+        if bet_id in self.active_bets:
+            self.active_bets[bet_id]["confirmed_events"] = confirmed
+
+        emoji_map = {"goal": "\u26bd", "card": "\U0001fe0f", "substitution": "\U0001f504", "injury": "\U0001f915"}
+        emoji = emoji_map.get(event.type, "\u26bd")
+
+        try:
+            msg = f"{emoji} {event.type.upper()}\n\n{player_disp}\n\nProgress: {confirmed} / {required} goals"
+            if bet.get("player_market") == "player_card":
+                msg = f"{emoji} {event.type.upper()}\n\n{player_disp}\n\nCard confirmed: {confirmed} / {required}"
+            elif bet.get("player_market") == "clean_sheet":
+                msg = f"{emoji} Clean sheet intact for {player_disp}"
+            asyncio.ensure_future(self.bot.send_message(bet["chat_id"], msg))
+        except Exception:
+            pass
+
+        if required > 0 and confirmed >= required:
+            self.store.update_bet(bet_id, {"status": BET_STATUS_RESOLVED, "winner": bet["creator"], "confirmed_events": confirmed})
+            self.active_bets.pop(bet_id, None)
+            try:
+                msg = f"\U0001f3c6 {player_disp}: {confirmed}/{required} confirmed — {bet['creator']} wins!"
+                asyncio.ensure_future(self.bot.send_message(bet["chat_id"], msg))
+            except Exception:
+                pass
 
     async def validate_fixture(self, fid: str) -> dict | None:
         import httpx

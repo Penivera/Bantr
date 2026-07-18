@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.constants import (
     VALID_MARKETS, UPCOMING_FIXTURES, MARKET_MATCH_WINNER,
     BET_STATUS_RESOLVED, BET_STATUS_VOID, flag_for, PLAYER_MARKET_REQUIRED_EVENTS,
+    PLAYER_MARKETS, PLAYER_MARKET_VALUES,
 )
 from app.core.logging import get_logger
 
@@ -80,13 +81,18 @@ ALIASES: dict[str, str] = {
 }
 
 BET_MARKET_MAP: dict[str, str] = {
-    "next goal": "next_goal", "goal": "next_goal", "scores": "next_goal", "score": "next_goal",
+    "next goal": "next_goal", "goal": "next_goal", "scores": "scores", "score": "scores",
     "next card": "next_card", "card": "next_card", "booking": "next_card",
     "yellow": "next_card", "red": "next_card",
     "next corner": "next_corner", "corner": "next_corner",
     "wins": "match_winner", "win": "match_winner", "winner": "match_winner",
     "match winner": "match_winner", "will win": "match_winner", "to win": "match_winner",
     "beat": "match_winner",
+    "hat trick": "hat_trick", "hattrick": "hat_trick", "hat-trick": "hat_trick",
+    "first scorer": "first_scorer", "first goal": "first_scorer", "scores first": "first_scorer",
+    "two goals": "two_goals", "brace": "two_goals", "2 goals": "two_goals",
+    "booked": "player_card", "red card": "player_card",
+    "clean sheet": "clean_sheet", "cleansheet": "clean_sheet",
 }
 
 # e.g. "@alice 50 next goal" or "@alice next goal 50" or "bet @alice 50 on Mbappe to score"
@@ -98,7 +104,7 @@ BET_REGEX = re.compile(
 # ── Deterministic bet parser ──
 
 def _parse_bet(text: str) -> dict | None:
-    """Try to parse a bet message without AI. Returns {opponent, amount, market, team} or None."""
+    """Try to parse a bet message without AI. Returns {opponent, amount, market, team, player} or None."""
     m = BET_REGEX.search(text)
     if not m:
         return None
@@ -118,17 +124,23 @@ def _parse_bet(text: str) -> dict | None:
             break
 
     if not market and rest:
-        market = rest.split()[0] if rest.split() else None
+        first_word = rest.split()[0] if rest.split() else None
+        if first_word and first_word in BET_MARKET_MAP:
+            market = BET_MARKET_MAP[first_word]
+            rest = rest[len(first_word):].strip()
+
     if market and market not in VALID_MARKETS:
         market = None
 
     extra = m.group(4)
+    if market and market in PLAYER_MARKET_VALUES and rest:
+        return {"opponent": opponent, "amount": amount, "market": market, "player": rest}
+
     if extra:
         team = extra.strip()
     elif rest:
         team = rest.strip() if rest else None
 
-    # If team is just the market keyword, clear it
     if team and team.lower() in BET_MARKET_MAP:
         team = None
 
@@ -148,14 +160,17 @@ HELP_TEXT = """\U0001f4d6 *Available Commands*
 \u2705 /call <bet_id> — Accept a pending bet
 \U0001f3c6 /leaderboard — View rankings
 
-*Markets:* next_goal, next_card, next_corner, match_winner
+*Standard markets:* next_goal, next_card, next_corner, match_winner
+
+*Player markets:* hat_trick, first_scorer, two_goals, scores, player_card, clean_sheet
 
 \U0001f9e0 *Natural Language*
 \U0001f4b0 /bet @alice next_goal 50
-\U0001f4b0 /bantr @alice next_goal 50
-\U0001f4b0 /ref @bob match_winner 100 France
+\U0001f4b0 /bet @alice hat_trick 50 Mbappe
+\U0001f4b0 Mbappe scores first — I bet @bob 50
 
-*Match winner* resolves at full time — winner takes the pot."""
+*Match winner* resolves at full time — winner takes the pot.
+*Player bets* resolve automatically when the player performs the action."""
 
 
 class TelegramBot:
@@ -246,10 +261,14 @@ class TelegramBot:
 
         args = parsed_args if parsed_args is not None else (message.text.split()[1:] if message.text else [])
         if len(args) < 3:
+            player_market_names = ", ".join(PLAYER_MARKET_VALUES)
             await self._reply(message,
-                f"Usage: /bet @user <market> <amount> [team]\n"
-                f"Markets: {', '.join(VALID_MARKETS)}\n"
-                "  /bet @alice next_goal 50\n  /bet @bob match_winner 100 France")
+                f"Usage: /bet @user <market> <amount> [team|player]\n"
+                f"Standard: {', '.join(['next_goal', 'next_card', 'next_corner', 'match_winner'])}\n"
+                f"Player: {player_market_names}\n"
+                "  /bet @alice next_goal 50\n"
+                "  /bet @bob match_winner 100 France\n"
+                "  /bet @alice hat_trick 50 Mbappe")
             return
 
         fid = engine.chat_fixtures.get(chat_id)
@@ -267,19 +286,51 @@ class TelegramBot:
             return
 
         if market_str not in VALID_MARKETS:
-            # Check if it's a player market
-            from app.core.constants import PLAYER_MARKETS
             if market_str in PLAYER_MARKETS:
                 market_str = PLAYER_MARKETS[market_str]
             else:
                 await self._reply(message, f"Unknown market. Use: {', '.join(VALID_MARKETS)}")
                 return
 
-        resolved_team, player_name, team_note = None, None, ""
+        resolved_team, player_name, player_normative_id, player_display, team_note = None, None, None, None, ""
+        is_player_market = market_str in PLAYER_MARKET_VALUES
+
         if raw_extra:
             if market_str == MARKET_MATCH_WINNER:
                 resolved_team = raw_extra
                 team_note = f"\nBacking: {resolved_team} to win"
+            elif is_player_market:
+                info = engine.fixture_info.get(fid, {})
+                matches = engine.resolve_player_name(fid, raw_extra)
+                if len(matches) == 1:
+                    p = matches[0]
+                    player_name = raw_extra
+                    player_normative_id = p.get("normative_id")
+                    player_display = p.get("match_display", player_name)
+                    team_name_v = p.get("team_name", "?")
+                    resolved_team = "team_1" if team_name_v == info.get("home") else "team_2"
+                    team_note = f"\n{player_display} ({team_name_v})"
+                    logger.info("player_resolved", input=raw_extra, display=player_display, nid=player_normative_id)
+                elif len(matches) > 1:
+                    top = matches[:5]
+                    lines = [f"Multiple players match '{raw_extra}':\n"]
+                    for p in top:
+                        lines.append(f"\u2022 {p['match_display']} ({p.get('team_name', '?')})")
+                    lines.append("\nReply with the full name to place your bet.")
+                    await self._reply(message, "\n".join(lines))
+                    return
+                else:
+                    info = engine.fixture_info.get(fid, {})
+                    resolved = await nlu.resolve_player_team(raw_extra, info)
+                    if resolved:
+                        resolved_team = resolved
+                        team_name_v = info.get("home") if resolved == "home" else info.get("away", "?")
+                        player_name = raw_extra
+                        player_display = raw_extra
+                        team_note = f"\n{player_name} \u2192 {team_name_v} (AI-resolved)"
+                    else:
+                        resolved_team = raw_extra
+                        team_note = f"\nResolves on: {resolved_team}"
             else:
                 info = engine.fixture_info.get(fid, {})
                 resolved = await nlu.resolve_player_team(raw_extra, info)
@@ -294,7 +345,11 @@ class TelegramBot:
 
         bet = store.create_bet({"chat_id": chat_id, "creator": username, "opponent": opponent,
             "market": market_str, "fixture_id": fid, "amount": amount,
-            "team": resolved_team, "player": player_name})
+            "team": resolved_team, "player": player_name,
+            "player_normative_id": player_normative_id,
+            "player_display": player_display or player_name,
+            "player_market": market_str if is_player_market else None,
+            "confirmed_events": 0})
         engine.active_bets[bet["id"]] = bet
 
         try:
@@ -429,7 +484,7 @@ class TelegramBot:
                     "Now type:\n"
                     f"`/bet @opponent {market} <amount> <player_name>`\n\n"
                     f"Example: `/bet @alice {market} 50 Mbappe`\n\n"
-                    "The bot will resolve which team the player is on.",
+                    "The bot will match the player from the live fixture roster.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="\U0001f519 Back", callback_data="menu:start")]]))
@@ -482,8 +537,11 @@ class TelegramBot:
             else:
                 status = "\u274c Not confirmed"
 
+            player_label = poll.player
+            if bet:
+                player_label = bet.get("player_display", bet.get("player", poll.player))
             await callback.message.edit_text(
-                f"\u26bd {poll.event_description} for {poll.player}\n"
+                f"\u26bd {poll.event_description} for {player_label}\n"
                 f"{status}", reply_markup=None)
         else:
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -532,7 +590,8 @@ class TelegramBot:
         bet_triggers = ("bet", "wager", "challenge", "stake", "$", "win", "lose",
                         "beat", "score", "card", "corner", "goal", "ref", "bantr",
                         "hat trick", "hattrick", "scores", "scoring", "booked",
-                        "red card", "yellow card", "penalty")
+                        "red card", "yellow card", "penalty", "brace", "clean sheet",
+                        "cleansheet", "first goal", "first scorer", "two goals")
         cmd_triggers = ("fixture", "match", "leaderboard", "ranking", "track", "help")
         looks_like_bet = any(kw in text.lower() for kw in bet_triggers)
         looks_like_cmd = any(kw in text.lower() for kw in cmd_triggers)
@@ -557,7 +616,8 @@ class TelegramBot:
             except Exception:
                 pass
             args = [parsed["opponent"], parsed.get("market") or "next_goal", parsed["amount"]]
-            if parsed.get("team"): args.append(parsed["team"])
+            if parsed.get("player"): args.append(parsed["player"])
+            elif parsed.get("team"): args.append(parsed["team"])
             await self.cmd_bet(message, parsed_args=args)
             return
 
@@ -578,7 +638,8 @@ class TelegramBot:
             try: await ack.delete()
             except Exception: pass
             args = [params["opponent"], params["market"], params["amount"]]
-            if params.get("team"): args.append(params["team"])
+            if params.get("player"): args.append(params["player"])
+            elif params.get("team"): args.append(params["team"])
             await self.cmd_bet(message, parsed_args=args)
             return
 
