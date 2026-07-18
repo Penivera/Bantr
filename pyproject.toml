@@ -21,6 +21,7 @@ dependencies = [
     "solders>=0.26.0",
     "structlog>=26.1.0",
     "uvicorn>=0.51.0",
+    "cairosvg>=2.9.0",
 ]
 
 [tool.uv]
