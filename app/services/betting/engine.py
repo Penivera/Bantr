@@ -82,6 +82,8 @@ class BetEngine:
         self.player_rosters: dict[str, dict[int, dict]] = {}
         self.all_players_by_fixture: dict[str, list[dict]] = {}
         self._rosters_fetching: set[str] = set()
+        from app.services.betting.broadcaster import MatchBroadcaster
+        self.broadcaster = MatchBroadcaster(bot, self)
 
     def fixture_label(self, fid: str) -> str:
         info = self.fixture_info.get(fid, {})
@@ -129,7 +131,11 @@ class BetEngine:
         return []
 
     def _on_event(self, event) -> None:
-        asyncio.ensure_future(self._resolve_event(event))
+        asyncio.ensure_future(self._on_event_async(event))
+
+    async def _on_event_async(self, event) -> None:
+        await self.broadcaster.broadcast(event)
+        await self._resolve_event(event)
 
     def _determine_match_winner(self, bet: dict, final_stats: dict) -> str | None:
         info = self.fixture_info.get(bet["fixture_id"], {})

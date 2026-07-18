@@ -54,6 +54,7 @@ class MatchEvent:
     player_normative_id: int | None = None
     player_in_normative_id: int | None = None
     player_out_normative_id: int | None = None
+    card_type: str | None = None  # "yellow" or "red"
     raw: ScoreEventRaw | None = None
 
 
@@ -160,21 +161,26 @@ def normalize_event(raw: ScoreEventRaw, prev_stats: dict[str, int] | None = None
 
     event_type = "score_update"
     team = None
+    card_type = None
 
     if delta["goals_changed"]:
         event_type = "goal"
         team = "team_1" if stats.get(str(STAT_KEY_GOAL_P1), 0) != prev.get(str(STAT_KEY_GOAL_P1), 0) else "team_2"
     elif delta["cards_changed"]:
         event_type = "card"
-        p1_current = stats.get(str(STAT_KEY_YELLOW_P1), 0) + stats.get(str(STAT_KEY_RED_P1), 0)
-        p1_prev = prev.get(str(STAT_KEY_YELLOW_P1), 0) + prev.get(str(STAT_KEY_RED_P1), 0)
-        team = "team_1" if p1_current != p1_prev else "team_2"
+        p1_yellow = stats.get(str(STAT_KEY_YELLOW_P1), 0) != prev.get(str(STAT_KEY_YELLOW_P1), 0)
+        p1_red = stats.get(str(STAT_KEY_RED_P1), 0) != prev.get(str(STAT_KEY_RED_P1), 0)
+        p2_yellow = stats.get(str(STAT_KEY_YELLOW_P2), 0) != prev.get(str(STAT_KEY_YELLOW_P2), 0)
+        p2_red = stats.get(str(STAT_KEY_RED_P2), 0) != prev.get(str(STAT_KEY_RED_P2), 0)
+        team = "team_1" if (p1_yellow or p1_red) else "team_2"
+        card_type = "red" if (p1_red or p2_red) else "yellow"
     elif delta["corners_changed"]:
         event_type = "corner"
         team = "team_1" if stats.get(str(STAT_KEY_CORNER_P1), 0) != prev.get(str(STAT_KEY_CORNER_P1), 0) else "team_2"
 
     return MatchEvent(fixture_id=fid, type=event_type, team=team, timestamp=raw.ts or 0,
-                      player_normative_id=raw.player_normative_id, raw=raw)
+                      player_normative_id=raw.player_normative_id,
+                      card_type=card_type, raw=raw)
 
 
 class TxLineStreamClient:
