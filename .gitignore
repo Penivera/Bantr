@@ -1,0 +1,24 @@
+# Environment secrets
+.env
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+CLAUDE.md
+bet-escrow/target/
+
+# Misc
+*.log
+.DS_Store
+.playwright/
+.claude/
+reach-contract/
+.claude/
+CLAUDE.md

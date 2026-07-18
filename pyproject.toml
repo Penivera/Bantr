@@ -1,0 +1,27 @@
+[project]
+name = "banter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Penivera", email = "penivera655@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.0",
+    "anchorpy>=0.21.0",
+    "base58>=2.1.1",
+    "fastapi>=0.139.2",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.2.2",
+    "pynacl>=1.5.0",
+    "qrcode>=7.4.0",
+    "solders>=0.26.0",
+    "structlog>=26.1.0",
+    "uvicorn>=0.51.0",
+]
+
+[tool.uv]
+package = false

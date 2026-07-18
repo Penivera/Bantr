@@ -1,0 +1,12 @@
+[programs.devnet]
+bet_escrow = "vaFdYpqXffc1QXpL1AauMpvAknBNjrdZYExMQg6wvgM"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test"
+
+[features]
+skip-lint = false
