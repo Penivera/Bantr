@@ -1,0 +1,15 @@
+.venv
+__pycache__
+*.pyc
+.env
+.git
+.gitignore
+*.log
+.DS_Store
+bet-escrow/target
+bet-escrow/test-ledger
+reach-contract
+.claude
+.playwright
+skills
+README.md
