@@ -33,6 +33,8 @@ def _normalize_fixture(raw: dict[str, Any]) -> dict | None:
 
     start_raw = raw.get("StartTime")
     if isinstance(start_raw, (int, float)):
+        if start_raw > 1e12:
+            start_raw = start_raw / 1000.0
         time_utc = datetime.fromtimestamp(start_raw, tz=timezone.utc).isoformat()
     elif isinstance(start_raw, str):
         time_utc = start_raw

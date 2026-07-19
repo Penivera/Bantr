@@ -37,9 +37,9 @@ async def lifespan(app):
     logger.info("web_dashboard", url=f"http://localhost:{settings.app_web_port}")
     yield
     logger.info("banterbot_shutting_down")
+    await container.bot.stop_async()
     if container.redis:
         await container.redis.disconnect()
-    os._exit(0)
 
 
 app = create_app(lifespan=lifespan)
