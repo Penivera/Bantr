@@ -83,12 +83,11 @@ ALIASES: dict[str, str] = {
 
 BET_MARKET_MAP: dict[str, str] = {
     "next goal": "next_goal", "goal": "next_goal", "scores": "scores", "score": "scores",
-    "next card": "next_card", "card": "next_card", "booking": "next_card",
+    "next card": "next_card", "card": "player_card", "booking": "player_card",
     "yellow": "next_card", "red": "next_card",
     "next corner": "next_corner", "corner": "next_corner",
     "wins": "match_winner", "win": "match_winner", "winner": "match_winner",
-    "match winner": "match_winner", "will win": "match_winner", "to win": "match_winner",
-    "beat": "match_winner",
+    "will win": "match_winner", "to win": "match_winner", "beat": "match_winner",
     "hat trick": "hat_trick", "hattrick": "hat_trick", "hat-trick": "hat_trick",
     "first scorer": "first_scorer", "first goal": "first_scorer", "scores first": "first_scorer",
     "two goals": "two_goals", "brace": "two_goals", "2 goals": "two_goals",
@@ -98,7 +97,7 @@ BET_MARKET_MAP: dict[str, str] = {
 
 # e.g. "@alice 50 next goal" or "@alice next goal 50" or "bet @alice 50 on Mbappe to score"
 BET_REGEX = re.compile(
-    r'@(\w+)\s+(\d+(?:\.\d+)?)\s*\$?\s*(.+?)(?:\s+(.+))?$',
+    r'@(\w+)\s+\$?(\d+(?:\.\d+)?)\s*(.+?)(?:\s+(.+))?$',
     re.IGNORECASE,
 )
 
@@ -119,15 +118,18 @@ def _parse_bet(text: str) -> dict | None:
     market = None
     team = None
     for key, val in sorted(BET_MARKET_MAP.items(), key=lambda x: -len(x[0])):
-        if key in rest:
+        if f" {key} " in f" {rest} ":
             market = val
-            rest = rest.replace(key, "").strip()
+            rest = rest.replace(key, "", 1).strip()
             break
 
     if not market and rest:
         first_word = rest.split()[0] if rest.split() else None
         if first_word and first_word in BET_MARKET_MAP:
             market = BET_MARKET_MAP[first_word]
+            rest = rest[len(first_word):].strip()
+        elif first_word and first_word in VALID_MARKETS:
+            market = first_word
             rest = rest[len(first_word):].strip()
 
     if market and market not in VALID_MARKETS:
@@ -280,10 +282,11 @@ class TelegramBot:
         opponent, market_str, amount_str = args[0], args[1], args[2]
         raw_extra = " ".join(args[3:]) if len(args) > 3 else None
 
+        amount_str = amount_str.lstrip("$")
         try:
             amount = float(amount_str)
         except ValueError:
-            await self._reply(message, "Amount must be a number.")
+            await self._reply(message, "Amount must be a number (e.g. 50 or $50).")
             return
 
         if market_str not in VALID_MARKETS:

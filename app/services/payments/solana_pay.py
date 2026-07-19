@@ -26,14 +26,29 @@ def derive_vault_pda(bet_pda: Pubkey) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address([b"bet_vault", bytes(bet_pda)], PROGRAM_ID)
 
 
+SUPPORTED_TOKENS: dict[str, str] = {
+    "USDC": "Gh9ZwEmdLJ8DscKNTkTqPBbNwJFNjZ2DRcaaFbwVLaNc",
+    "USDT": "EJwZgeZrdC8TXTQbQBoL6bfuAnFUUy1PVCMB4DYPzVaS",
+}
+
+
 def build_transaction_request_url(
     instruction: str,
     params: dict[str, str],
 ) -> str:
     """Build a Solana Pay Transaction Request URL for the BetEscrow program."""
     from urllib.parse import urlencode
-    qs = urlencode({**params, "instruction": instruction, "programId": settings.bet_escrow_program_id})
-    return f"{settings.app_base_url.rstrip('/')}/api/pay?{qs}"
+    token = params.pop("token", settings.bet_payment_token_symbol)
+    token_mint = SUPPORTED_TOKENS.get(token, SUPPORTED_TOKENS["USDC"])
+    qs = urlencode({
+        **params,
+        "instruction": instruction,
+        "programId": settings.bet_escrow_program_id,
+        "tokenMint": token_mint,
+        "tokenSymbol": token,
+    })
+    base = settings.app_base_url.rstrip("/")
+    return f"{base}/api/pay?{qs}"
 
 
 class SolanaPayService:

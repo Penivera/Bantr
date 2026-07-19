@@ -28,14 +28,16 @@ class Settings(BaseSettings):
 
     # BetEscrow
     bet_escrow_program_id: str = "vaFdYpqXffc1QXpL1AauMpvAknBNjrdZYExMQg6wvgM"
+    bet_payment_token_mint: str = "Gh9ZwEmdLJ8DscKNTkTqPBbNwJFNjZ2DRcaaFbwVLaNc"
+    bet_payment_token_symbol: str = "USDC"
 
     # App
     app_web_port: int = 3000
     app_log_level: str = "INFO"
     app_fixture_ids: str = "18257865,18257739"
     app_debug: bool = True
-    app_webhook_url: str = ""
-    app_base_url: str = ""
+    app_webhook_url: str = "https://usebantr.site"
+    app_base_url: str = "https://usebantr.site"
     app_redis_url: str = "redis://localhost:6379"
 
 
