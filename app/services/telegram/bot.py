@@ -155,6 +155,9 @@ def _parse_bet(text: str) -> dict | None:
 
 # ── Help text ──
 
+def _fmt_market(m: str) -> str:
+    return m.replace("_", " ").title()
+
 HELP_TEXT = """\U0001f4d6 *Available Commands*
 
 \U0001f4c5 /fixtures — View upcoming matches
@@ -163,9 +166,9 @@ HELP_TEXT = """\U0001f4d6 *Available Commands*
 \u2705 /call <bet_id> — Accept a pending bet
 \U0001f3c6 /leaderboard — View rankings
 
-*Standard markets:* next_goal, next_card, next_corner, match_winner
+*Standard markets:* """ + ", ".join(_fmt_market(m) for m in ["next_goal", "next_card", "next_corner", "match_winner"]) + """
 
-*Player markets:* hat_trick, first_scorer, two_goals, scores, player_card, clean_sheet
+*Player markets:* """ + ", ".join(_fmt_market(m) for m in PLAYER_MARKET_VALUES) + """
 
 \U0001f9e0 *Natural Language*
 \U0001f4b0 /bet @alice next_goal 50
@@ -264,10 +267,10 @@ class TelegramBot:
 
         args = parsed_args if parsed_args is not None else (message.text.split()[1:] if message.text else [])
         if len(args) < 3:
-            player_market_names = ", ".join(PLAYER_MARKET_VALUES)
+            player_market_names = ", ".join(_fmt_market(m) for m in PLAYER_MARKET_VALUES)
             await self._reply(message,
                 f"Usage: /bet @user <market> <amount> [team|player]\n"
-                f"Standard: {', '.join(['next_goal', 'next_card', 'next_corner', 'match_winner'])}\n"
+                f"Standard: {', '.join(_fmt_market(m) for m in ['next_goal', 'next_card', 'next_corner', 'match_winner'])}\n"
                 f"Player: {player_market_names}\n"
                 "  /bet @alice next_goal 50\n"
                 "  /bet @bob match_winner 100 France\n"
