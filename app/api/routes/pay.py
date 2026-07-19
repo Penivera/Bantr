@@ -12,7 +12,7 @@ from solders.hash import Hash
 from solders.system_program import ID as SYSTEM_PROGRAM_ID
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services.payments.solana_pay import derive_bet_pda, derive_vault_pda, BET_ESCROW_DISCRIMINATOR
+from app.services.payments.solana_pay import derive_bet_pda, derive_vault_pda, IX_INITIALIZE_BET, IX_JOIN_BET
 
 logger = get_logger(__name__)
 
@@ -39,7 +39,7 @@ def _build_initialize_bet_ix(
     token_mint: Pubkey,
 ) -> Instruction:
     data = bytearray()
-    data += BET_ESCROW_DISCRIMINATOR
+    data += IX_INITIALIZE_BET
     data += struct.pack("<Q", 0)
     data += struct.pack("<Q", bet_id)
     data += struct.pack("<Q", fixture_id)
@@ -68,7 +68,7 @@ def _build_join_bet_ix(
     amount: int,
 ) -> Instruction:
     data = bytearray()
-    data += BET_ESCROW_DISCRIMINATOR
+    data += IX_JOIN_BET
     data += struct.pack("<Q", 1)
     data += struct.pack("<Q", bet_id)
     data += struct.pack("<Q", amount)

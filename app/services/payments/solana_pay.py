@@ -13,6 +13,10 @@ PROGRAM_ID = Pubkey.from_string(settings.bet_escrow_program_id)
 # Account discriminator for BetEscrow (first 8 bytes of sha256("account:BetEscrow"))
 BET_ESCROW_DISCRIMINATOR = bytes([198, 247, 82, 132, 85, 253, 182, 140])
 
+# Instruction discriminators (first 8 bytes of sha256("global:<instruction_name>"))
+IX_INITIALIZE_BET = bytes([195, 185, 122, 189, 203, 104, 43, 57])
+IX_JOIN_BET = bytes([69, 116, 82, 26, 144, 192, 58, 238])
+
 
 def derive_bet_pda(bet_id: str) -> tuple[Pubkey, int]:
     # Hash the bet ID string to a u64 for PDA derivation
