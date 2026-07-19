@@ -5,6 +5,7 @@ from solders.keypair import Keypair
 from app.core.config import settings
 from app.core.constants import default_deadline
 from app.core.logging import get_logger
+from app.core.tokens import get_token_mint, get_token_decimals
 
 logger = get_logger(__name__)
 
@@ -30,12 +31,6 @@ def derive_vault_pda(bet_pda: Pubkey) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address([b"bet_vault", bytes(bet_pda)], PROGRAM_ID)
 
 
-SUPPORTED_TOKENS: dict[str, str] = {
-    "USDC": "Gh9ZwEmdLJ8DscKNTkTqPBbNwJFNjZ2DRcaaFbwVLaNc",
-    "USDT": "EJwZgeZrdC8TXTQbQBoL6bfuAnFUUy1PVCMB4DYPzVaS",
-}
-
-
 def build_transaction_request_url(
     instruction: str,
     params: dict[str, str],
@@ -43,7 +38,8 @@ def build_transaction_request_url(
     """Build a Solana Pay Transaction Request URL for the BetEscrow program."""
     from urllib.parse import urlencode, quote
     token = params.pop("token", settings.bet_payment_token_symbol)
-    token_mint = SUPPORTED_TOKENS.get(token, SUPPORTED_TOKENS["USDC"])
+    is_devnet = "devnet" in settings.solana_rpc_url
+    token_mint = str(get_token_mint(token, devnet=is_devnet))
     qs = urlencode({
         **params,
         "instruction": instruction,
@@ -63,7 +59,8 @@ def build_https_pay_url(
     """Build the raw HTTPS URL (no solana: prefix) for wallets that fetch directly."""
     from urllib.parse import urlencode
     token = params.pop("token", settings.bet_payment_token_symbol)
-    token_mint = SUPPORTED_TOKENS.get(token, SUPPORTED_TOKENS["USDC"])
+    is_devnet = "devnet" in settings.solana_rpc_url
+    token_mint = str(get_token_mint(token, devnet=is_devnet))
     qs = urlencode({
         **params,
         "instruction": instruction,

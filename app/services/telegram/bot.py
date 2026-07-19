@@ -744,8 +744,9 @@ class TelegramBot:
                     logger.error("webhook_registration_failed", url=url, error=str(exc))
 
     async def stop_async(self) -> None:
-        if self.bot:
-            await self.bot.delete_webhook(drop_pending_updates=True)
+        if settings.app_debug and self.bot:
+            #await self.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("bot_stopping")
         if self.dp:
             await self.dp.stop_polling()
 

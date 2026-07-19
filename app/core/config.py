@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # BetEscrow
     bet_escrow_program_id: str = Field(default="vaFdYpqXffc1QXpL1AauMpvAknBNjrdZYExMQg6wvgM", description="Bet Escrow Program ID")
-    bet_payment_token_mint: str = Field(default="Gh9ZwEmdLJ8DscKNTkTqPBbNwJFNjZ2DRcaaFbwVLaNc", description="Payment Token Mint")
+    bet_payment_token_mint: str = Field(default="4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", description="Payment Token Mint")
     bet_payment_token_symbol: str = Field(default="USDC", description="Payment Token Symbol")
 
     # App

@@ -396,7 +396,7 @@ class TestPaymentLink:
                 {"id": "z", "fixture_id": "f", "market": "next_goal", "amount": 3})
         )
         https = result["https_url"]
-        assert "tokenMint=Gh9ZwEmdLJ8DscKNTkTqPBbNwJFNjZ2DRcaaFbwVLaNc" in https
+        assert "tokenMint=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU" in https
         assert "tokenSymbol=USDC" in https
 
 
