@@ -223,10 +223,10 @@ class TelegramBot:
     # ── /help ──
 
     async def cmd_help(self, message: types.Message) -> None:
-        await message.answer(HELP_TEXT, parse_mode="Markdown")
+        await message.answer(HELP_TEXT)
 
     async def _help_callback(self, callback: CallbackQuery) -> None:
-        await callback.message.edit_text(HELP_TEXT, parse_mode="Markdown", reply_markup=_inline_menu())
+        await callback.message.edit_text(HELP_TEXT, reply_markup=_inline_menu())
 
     # ── /fixtures ──
 
@@ -699,8 +699,11 @@ class TelegramBot:
 
         @r.message()
         async def route_all(msg: types.Message):
+            text = msg.text or ""
+            if text.startswith("/"):
+                return
             if msg.chat:
-                logger.info("msg", chat_id=msg.chat.id, text=(msg.text or "")[:60])
+                logger.info("msg", chat_id=msg.chat.id, text=text[:60])
             await self.handle_nlu(msg)
 
     async def start_async(self) -> None:
@@ -709,6 +712,13 @@ class TelegramBot:
         self.dp.include_router(self._router)
         self._register_handlers()
         logger.info("telegram_bot_starting", debug=settings.app_debug)
+
+        try:
+            me = await self.bot.get_me()
+            settings.telegram_bot_username = me.username or settings.telegram_bot_username
+            logger.info("bot_identity", username=settings.telegram_bot_username, id=me.id)
+        except Exception:
+            logger.warning("bot_get_me_failed", fallback=settings.telegram_bot_username)
 
         await self.bot.delete_webhook(drop_pending_updates=False)
 

@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from solders.pubkey import Pubkey
 from solders.instruction import Instruction, AccountMeta
 from solders.transaction import Transaction
+from solders.message import Message as SoldersMessage
 from solders.hash import Hash
 from solders.system_program import ID as SYSTEM_PROGRAM_ID
 from app.core.config import settings
@@ -32,7 +33,7 @@ def _build_initialize_bet_ix(
     token_mint: Pubkey,
 ) -> Instruction:
     data = bytearray()
-    data += struct.pack("<Q", BET_ESCROW_DISCRIMINATOR)
+    data += BET_ESCROW_DISCRIMINATOR
     data += struct.pack("<Q", 0)
     data += struct.pack("<Q", bet_id)
     data += struct.pack("<Q", fixture_id)
@@ -61,7 +62,7 @@ def _build_join_bet_ix(
     amount: int,
 ) -> Instruction:
     data = bytearray()
-    data += struct.pack("<Q", BET_ESCROW_DISCRIMINATOR)
+    data += BET_ESCROW_DISCRIMINATOR
     data += struct.pack("<Q", 1)
     data += struct.pack("<Q", bet_id)
     data += struct.pack("<Q", amount)
@@ -137,12 +138,12 @@ async def solana_pay_request(
             deadline_val, token_mint_pk,
         )
 
-    tx = Transaction.new_signed_with_payer(
+    msg = SoldersMessage.new_with_blockhash(
         instructions=[ix],
         payer=creator,
-        signing_keypairs=[WALLET],
-        recent_blockhash=blockhash,
+        blockhash=blockhash,
     )
+    tx = Transaction.new_unsigned(msg)
 
     serialized_tx = base64.b64encode(bytes(tx)).decode()
 
