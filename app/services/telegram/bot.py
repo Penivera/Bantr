@@ -436,14 +436,32 @@ class TelegramBot:
             engine.active_bets[partial]["status"] = "called"
         try:
             opp_pay = await payments.generate_payment_request(entry, instruction="join_bet")
+
+            from app.api.routes.payments import PaymentRecord, create_payment_id, store_payment
+            from app.core.tokens import get_token_mint
+            is_devnet = "devnet" in settings.solana_rpc_url
+            pay_id = create_payment_id()
+            store_payment(PaymentRecord(
+                payment_id=pay_id, bet_id=partial, amount=float(entry.get("amount", 0)),
+                token_symbol=settings.bet_payment_token_symbol,
+                token_mint=str(get_token_mint(settings.bet_payment_token_symbol, devnet=is_devnet)),
+                recipient=str(opp_pay["reference"]),
+                instruction="join_bet",
+            ))
+            web_url = f"{settings.app_base_url.rstrip('/')}/pay?payment_id={pay_id}"
+
             msg = (f"{entry['creator']} \u2705 {username} accepted!\n"
                    f"\U0001f4b3 Scan QR or <a href=\"{opp_pay['transaction_request_url']}\">tap to pay</a>")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="\U0001f4f1 Scan QR (Solana Pay)", url=opp_pay["https_url"])],
+                [InlineKeyboardButton(text="\U0001f4bb Connect Wallet", url=web_url)],
+            ])
             if opp_pay.get("qr_png"):
                 from aiogram.types import BufferedInputFile
                 photo = BufferedInputFile(opp_pay["qr_png"], filename="payment.png")
-                await message.answer_photo(photo, caption=msg, parse_mode="HTML")
+                await message.answer_photo(photo, caption=msg, parse_mode="HTML", reply_markup=kb)
             else:
-                await self._reply(message, msg, parse_mode="HTML")
+                await message.answer(msg, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
             await self._reply(message, f"\u2705 Accepted! (payment link failed: {e})")
         ref = entry.get("payment_reference")
@@ -1035,12 +1053,32 @@ class TelegramBot:
     def _on_deposit(self, chat_id: int, bet_id: str, confirmed: bool) -> None:
         if not confirmed:
             return
-        self.container.store.update_bet(bet_id, {"status": "funded"})
+        store = self.container.store
+        store.update_bet(bet_id, {"status": "funded"})
         if bet_id in self.container.engine.active_bets:
             self.container.engine.active_bets[bet_id]["status"] = "funded"
+        bet = store.get_bet(bet_id)
+        if not bet:
+            return
         import asyncio
-        asyncio.ensure_future(self.send_message(chat_id,
-            f"\U0001f4b0 Bet funded. Waiting for the next live event..."))
+        tracked = self._tracked_label(chat_id) or "?"
+        market = (bet.get("market", "?")).replace("_", " ").title()
+        stake = bet.get("amount", 0)
+        creator = bet.get("creator", "?")
+        opponent = bet.get("opponent", "?")
+        is_called = bet.get("status") == "funded"
+        if is_called and bet.get("opponent"):
+            msg = (f"\u2705 *Bet Accepted*\n\n"
+                   f"\u26bd {tracked}\n\n"
+                   f"Market: {market}\n"
+                   f"Stake: {stake} USDC each\n"
+                   f"Total Pot: {stake * 2} USDC\n\n"
+                   f"\U0001f464 {creator} vs {opponent}\n\n"
+                   f"\U0001f7e2 Status: Active\n"
+                   f"Waiting for the match to begin...")
+        else:
+            msg = f"\U0001f4b0 Bet funded. Waiting for opponent to accept..."
+        asyncio.ensure_future(self.send_message(chat_id, msg))
 
     # ── Lifecycle ──
 

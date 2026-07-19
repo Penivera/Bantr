@@ -149,9 +149,29 @@ async def submit_payment(payment_id: str, body: SubmitPaymentBody):
         if bet:
             chat_id = bet.get("chat_id", 0)
             import asyncio
-            asyncio.ensure_future(
-                container.bot.send_message(chat_id,
-                    f"\u2705 Payment confirmed!\nAmount: {record.amount} {record.token_symbol}\nTx: {body.tx_signature[:16]}..."))
+
+            if record.instruction == "join_bet":
+                container.store.update_bet(record.bet_id, {"status": "funded"})
+                if record.bet_id in container.engine.active_bets:
+                    container.engine.active_bets[record.bet_id]["status"] = "funded"
+
+                engine = container.engine
+                info = engine.fixture_info.get(bet.get("fixture_id", ""), {})
+                tracked = f"{info.get('home','?')} vs {info.get('away','?')}"
+                market = (bet.get("market", "?")).replace("_", " ").title()
+                stake = bet.get("amount", 0)
+                msg = (f"\u2705 *Bet Accepted*\n\n"
+                       f"\u26bd {tracked}\n\n"
+                       f"Market: {market}\n"
+                       f"Stake: {stake} USDC each\n"
+                       f"Total Pot: {stake * 2} USDC\n\n"
+                       f"\U0001f464 {bet.get('creator','?')} vs {bet.get('opponent','?')}\n\n"
+                       f"\U0001f7e2 Status: Active\n"
+                       f"Waiting for the match to begin...")
+            else:
+                msg = f"\u2705 Payment confirmed!\nAmount: {record.amount} {record.token_symbol}\nTx: {body.tx_signature[:16]}..."
+
+            asyncio.ensure_future(container.bot.send_message(chat_id, msg))
 
     return JSONResponse({"status": "confirmed", "tx_signature": body.tx_signature})
 

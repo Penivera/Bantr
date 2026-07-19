@@ -31,7 +31,6 @@ MARKET_TO_EVENT = {
     MARKET_NEXT_GOAL: ["goal"],
     MARKET_NEXT_CARD: ["card"],
     MARKET_NEXT_CORNER: ["corner"],
-    MARKET_MATCH_WINNER: ["score_update"],
 }
 
 
@@ -105,12 +104,16 @@ class BetStore:
                     existing.payment_reference = bet.get("payment_reference", existing.payment_reference)
                     existing.tx_signature = bet.get("tx_signature", existing.tx_signature)
                     existing.winner = bet.get("winner", existing.winner)
-                    import time
+                    import time, datetime
                     status = bet.get("status")
                     if status == "called":
-                        existing.accepted_at = bet.get("accepted_at", int(time.time()))
+                        existing.accepted_at = datetime.datetime.fromtimestamp(bet.get("accepted_at", time.time()), tz=datetime.timezone.utc).replace(tzinfo=None)
                     elif status in ("resolved", "void"):
-                        existing.settled_at = bet.get("settled_at", int(time.time()))
+                        ts = bet.get("settled_at", time.time())
+                        if isinstance(ts, (int, float)):
+                            existing.settled_at = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).replace(tzinfo=None)
+                        else:
+                            existing.settled_at = ts
                     elif status == "void" and bet.get("creator") == existing.creator_username:
                         import datetime
                         existing.cancelled_at = datetime.datetime.now(datetime.timezone.utc)
@@ -352,7 +355,7 @@ class BetEngine:
             for bid, bet in list(self.active_bets.items()):
                 if bet["fixture_id"] != event.fixture_id:
                     continue
-                if bet["status"] in (BET_STATUS_RESOLVED, BET_STATUS_VOID):
+                if bet["status"] in (BET_STATUS_RESOLVED, BET_STATUS_VOID, BET_STATUS_OPEN):
                     continue
 
                 if bet["market"] == MARKET_MATCH_WINNER:
@@ -411,14 +414,13 @@ class BetEngine:
                     pass
             return
 
-        open_bets = self.store.get_open_bets(event.fixture_id)
-        all_live = open_bets + [b for b in self.active_bets.values()
-                                if b["fixture_id"] == event.fixture_id
-                                and b["status"] not in (BET_STATUS_RESOLVED, BET_STATUS_VOID)]
+        all_live = [b for b in self.active_bets.values()
+                    if b["fixture_id"] == event.fixture_id
+                    and b["status"] not in (BET_STATUS_RESOLVED, BET_STATUS_VOID, BET_STATUS_OPEN)]
         seen: set[str] = set()
 
         for bet in all_live:
-            if bet["id"] in seen or bet["status"] in (BET_STATUS_RESOLVED, BET_STATUS_VOID):
+            if bet["id"] in seen or bet["status"] in (BET_STATUS_RESOLVED, BET_STATUS_VOID, BET_STATUS_OPEN):
                 continue
             seen.add(bet["id"])
 
