@@ -33,7 +33,7 @@ def build_transaction_request_url(
     """Build a Solana Pay Transaction Request URL for the BetEscrow program."""
     from urllib.parse import urlencode
     qs = urlencode({**params, "instruction": instruction, "programId": settings.bet_escrow_program_id})
-    return f"https://banter.example/api/pay?{qs}"
+    return f"{settings.app_base_url.rstrip('/')}/api/pay?{qs}"
 
 
 class SolanaPayService:
