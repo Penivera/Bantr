@@ -37,6 +37,26 @@ def build_transaction_request_url(
     params: dict[str, str],
 ) -> str:
     """Build a Solana Pay Transaction Request URL for the BetEscrow program."""
+    from urllib.parse import urlencode, quote
+    token = params.pop("token", settings.bet_payment_token_symbol)
+    token_mint = SUPPORTED_TOKENS.get(token, SUPPORTED_TOKENS["USDC"])
+    qs = urlencode({
+        **params,
+        "instruction": instruction,
+        "programId": settings.bet_escrow_program_id,
+        "tokenMint": token_mint,
+        "tokenSymbol": token,
+    })
+    base = settings.app_base_url.rstrip("/")
+    https_url = f"{base}/api/pay?{qs}"
+    return f"solana:{quote(https_url, safe='')}"
+
+
+def build_https_pay_url(
+    instruction: str,
+    params: dict[str, str],
+) -> str:
+    """Build the raw HTTPS URL (no solana: prefix) for wallets that fetch directly."""
     from urllib.parse import urlencode
     token = params.pop("token", settings.bet_payment_token_symbol)
     token_mint = SUPPORTED_TOKENS.get(token, SUPPORTED_TOKENS["USDC"])
@@ -67,7 +87,15 @@ class SolanaPayService:
         market = market_map.get(bet.get("market", "next_goal"), "1")
         deadline = default_deadline()
 
-        url = build_transaction_request_url(instruction, {
+        solana_url = build_transaction_request_url(instruction, {
+            "bet_id": bet["id"],
+            "fixture_id": bet.get("fixture_id", ""),
+            "market": market,
+            "amount": str(bet.get("amount", 0)),
+            "resolve_deadline": str(deadline),
+        })
+
+        https_url = build_https_pay_url(instruction, {
             "bet_id": bet["id"],
             "fixture_id": bet.get("fixture_id", ""),
             "market": market,
@@ -80,7 +108,7 @@ class SolanaPayService:
         try:
             import qrcode
             import io
-            qr = qrcode.make(url)
+            qr = qrcode.make(solana_url)
             buf = io.BytesIO()
             qr.save(buf, format="PNG")
             qr_data_url = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
@@ -88,7 +116,8 @@ class SolanaPayService:
             qr_data_url = None
 
         return {
-            "transaction_request_url": url,
+            "transaction_request_url": solana_url,
+            "https_url": https_url,
             "reference": str(bet_pda),
             "qr_data_url": qr_data_url,
         }

@@ -23,7 +23,14 @@ def render_template(name: str, **kwargs) -> str:
 
 
 def create_app(lifespan=None) -> FastAPI:
+    from fastapi.middleware.cors import CORSMiddleware
     app = FastAPI(title="BanterBot", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     from app.api.routes.pay import router as pay_router

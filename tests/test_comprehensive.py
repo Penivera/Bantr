@@ -360,7 +360,8 @@ class TestPaymentLink:
             svc.payments.generate_payment_request(
                 {"id": "abc", "fixture_id": "1", "market": "next_goal", "amount": 5})
         )
-        assert "https://myrealapp.io/api/pay?" in result["transaction_request_url"]
+        assert "https://myrealapp.io/api/pay?" in result["https_url"]
+        assert result["transaction_request_url"].startswith("solana:")
 
     def test_different_url(self):
         svc = create_test_services(app_base_url="https://other.example")
@@ -368,7 +369,7 @@ class TestPaymentLink:
             svc.payments.generate_payment_request(
                 {"id": "x", "fixture_id": "2", "market": "match_winner", "amount": 100})
         )
-        assert "https://other.example/api/pay?" in result["transaction_request_url"]
+        assert "https://other.example/api/pay?" in result["https_url"]
 
     def test_trailing_slash_handled(self):
         svc = create_test_services(app_base_url="https://foo.bar/")
@@ -376,8 +377,8 @@ class TestPaymentLink:
             svc.payments.generate_payment_request(
                 {"id": "y", "fixture_id": "3", "market": "next_goal", "amount": 7})
         )
-        assert result["transaction_request_url"].startswith("https://foo.bar/api/pay?")
-        assert "//api" not in result["transaction_request_url"]
+        assert result["https_url"].startswith("https://foo.bar/api/pay?")
+        assert "//api" not in result["https_url"]
 
     def test_not_standin(self):
         svc = create_test_services(app_base_url="https://realsite.app")
@@ -386,6 +387,7 @@ class TestPaymentLink:
                 {"id": "z", "fixture_id": "f", "market": "next_goal", "amount": 3})
         )
         assert "banter.example" not in result["transaction_request_url"]
+        assert "banter.example" not in result["https_url"]
 
     def test_includes_token_mint(self):
         svc = create_test_services(app_base_url="https://realsite.app")
@@ -393,8 +395,9 @@ class TestPaymentLink:
             svc.payments.generate_payment_request(
                 {"id": "z", "fixture_id": "f", "market": "next_goal", "amount": 3})
         )
-        assert "tokenMint=Gh9ZwEmdLJ8DscKNTkTqPBbNwJFNjZ2DRcaaFbwVLaNc" in result["transaction_request_url"]
-        assert "tokenSymbol=USDC" in result["transaction_request_url"]
+        https = result["https_url"]
+        assert "tokenMint=Gh9ZwEmdLJ8DscKNTkTqPBbNwJFNjZ2DRcaaFbwVLaNc" in https
+        assert "tokenSymbol=USDC" in https
 
 
 # ══════════════════════════════════════════════════

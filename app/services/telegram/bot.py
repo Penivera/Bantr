@@ -368,7 +368,7 @@ class TelegramBot:
             msg = (f"{opponent} \U0001f525 {username} challenges you!\n"
                    f"{tracked} | {market_str} | Stake: {amount}"
                    f"{team_note}\n{resolve_note}\n\n"
-                   f"\U0001f4b3 {username}: {pay_req['transaction_request_url']}\n\n"
+                   f"\U0001f4b3 {username}: <a href=\"{pay_req['https_url']}\">{pay_req['transaction_request_url']}</a>\n\n"
                    f"Accept: /call <code>{bet['id'][:4]}</code>")
             await message.answer(msg, parse_mode="HTML")
         except Exception as e:
@@ -404,7 +404,7 @@ class TelegramBot:
             opp_pay = await payments.generate_payment_request(entry, instruction="join_bet")
             await self._reply(message,
                 f"{entry['creator']} \u2705 {username} accepted!\n"
-                f"\U0001f4b3 {username}: {opp_pay['transaction_request_url']}",
+                f"\U0001f4b3 {username}: <a href=\"{opp_pay['https_url']}\">{opp_pay['transaction_request_url']}</a>",
                 parse_mode="HTML")
         except Exception as e:
             await self._reply(message, f"\u2705 Accepted! (payment link failed: {e})")
