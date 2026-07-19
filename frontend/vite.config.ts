@@ -14,7 +14,7 @@ export default defineConfig({
     'global': 'globalThis',
   },
   build: {
-    outDir: '../app/api/static/spa',
+    outDir: 'dist',
     emptyOutDir: true,
   },
 });
