@@ -22,7 +22,7 @@ EXPOSE 8001
 
 USER banter
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+HEALTHCHECK --interval=300s --timeout=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/status')"
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

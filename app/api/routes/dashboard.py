@@ -26,6 +26,9 @@ def create_app(lifespan=None) -> FastAPI:
     app = FastAPI(title="BanterBot", version="0.1.0", lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+    from app.api.routes.pay import router as pay_router
+    app.include_router(pay_router)
+
     @app.get("/", response_class=HTMLResponse)
     async def index():
         return render_template("index.html", bot_url=f"https://t.me/{settings.telegram_bot_username}")
