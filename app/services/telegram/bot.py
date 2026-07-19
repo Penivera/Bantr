@@ -368,9 +368,14 @@ class TelegramBot:
             msg = (f"{opponent} \U0001f525 {username} challenges you!\n"
                    f"{tracked} | {market_str} | Stake: {amount}"
                    f"{team_note}\n{resolve_note}\n\n"
-                   f"\U0001f4b3 {username}: <a href=\"{pay_req['https_url']}\">{pay_req['transaction_request_url']}</a>\n\n"
+                   f"\U0001f4b3 Scan QR or <a href=\"{pay_req['transaction_request_url']}\">tap to pay</a>\n\n"
                    f"Accept: /call <code>{bet['id'][:4]}</code>")
-            await message.answer(msg, parse_mode="HTML")
+            if pay_req.get("qr_png"):
+                from aiogram.types import BufferedInputFile
+                photo = BufferedInputFile(pay_req["qr_png"], filename="payment.png")
+                await message.answer_photo(photo, caption=msg, parse_mode="HTML")
+            else:
+                await message.answer(msg, parse_mode="HTML")
         except Exception as e:
             await self._reply(message, f"Bet created but payment setup failed: {e}")
 
@@ -402,10 +407,14 @@ class TelegramBot:
             engine.active_bets[partial]["status"] = "called"
         try:
             opp_pay = await payments.generate_payment_request(entry, instruction="join_bet")
-            await self._reply(message,
-                f"{entry['creator']} \u2705 {username} accepted!\n"
-                f"\U0001f4b3 {username}: <a href=\"{opp_pay['https_url']}\">{opp_pay['transaction_request_url']}</a>",
-                parse_mode="HTML")
+            msg = (f"{entry['creator']} \u2705 {username} accepted!\n"
+                   f"\U0001f4b3 Scan QR or <a href=\"{opp_pay['transaction_request_url']}\">tap to pay</a>")
+            if opp_pay.get("qr_png"):
+                from aiogram.types import BufferedInputFile
+                photo = BufferedInputFile(opp_pay["qr_png"], filename="payment.png")
+                await message.answer_photo(photo, caption=msg, parse_mode="HTML")
+            else:
+                await self._reply(message, msg, parse_mode="HTML")
         except Exception as e:
             await self._reply(message, f"\u2705 Accepted! (payment link failed: {e})")
         ref = entry.get("payment_reference")

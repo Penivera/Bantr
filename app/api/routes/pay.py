@@ -102,7 +102,6 @@ async def solana_pay_preview(
     return JSONResponse({
         "label": "BanterBet",
         "icon": "https://usebantr.site/static/images/logo.png",
-        "message": f"Place bet {bet_id[:4]} — {amount_display:.1f} {token_symbol}",
     })
 
 

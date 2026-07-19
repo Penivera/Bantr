@@ -105,21 +105,23 @@ class SolanaPayService:
 
         bet_pda, _ = derive_bet_pda(bet["id"])
 
+        qr_png_bytes = None
         try:
             import qrcode
             import io
             qr = qrcode.make(solana_url)
             buf = io.BytesIO()
             qr.save(buf, format="PNG")
-            qr_data_url = f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+            buf.seek(0)
+            qr_png_bytes = buf.read()
         except ImportError:
-            qr_data_url = None
+            logger.warning("qrcode_not_installed")
 
         return {
             "transaction_request_url": solana_url,
             "https_url": https_url,
             "reference": str(bet_pda),
-            "qr_data_url": qr_data_url,
+            "qr_png": qr_png_bytes,
         }
 
     def watch_for_deposit(self, reference: str, callback) -> None:
