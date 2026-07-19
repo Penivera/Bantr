@@ -36,29 +36,179 @@ MARKET_TO_EVENT = {
 
 
 class BetStore:
-    def __init__(self):
+    def __init__(self, redis_store=None):
         self._bets: dict[str, dict] = {}
+        self.redis = redis_store
 
     def create_bet(self, bet_data: dict) -> dict:
+        import time
         bid = uuid.uuid4().hex[:7]
-        bet = {**bet_data, "id": bid, "status": BET_STATUS_OPEN}
+        bet = {
+            **bet_data,
+            "id": bid,
+            "status": BET_STATUS_OPEN,
+            "created_at": int(time.time()),
+        }
         self._bets[bid] = bet
+        if self.redis:
+            import asyncio
+            asyncio.ensure_future(self.redis.save_bet(bet))
+        self._persist_to_db(bet)
         return bet
 
     def get_open_bets(self, fixture_id: str) -> list[dict]:
-        return [b for b in self._bets.values() if b["fixture_id"] == fixture_id and b["status"] == BET_STATUS_OPEN]
+        return [b for b in self._bets.values() if b.get("fixture_id") == fixture_id and b.get("status") == BET_STATUS_OPEN]
 
     def update_bet(self, bet_id: str, patch: dict) -> None:
         if bet_id in self._bets:
             self._bets[bet_id].update(patch)
+        if self.redis:
+            import asyncio
+            status = patch.get("status")
+            if status:
+                import time
+                extra = {k: v for k, v in patch.items() if k != "status"}
+                if status == BET_STATUS_CALLED:
+                    extra["accepted_at"] = int(time.time())
+                elif status in (BET_STATUS_RESOLVED, BET_STATUS_VOID):
+                    extra["settled_at"] = int(time.time())
+                asyncio.ensure_future(self.redis.update_bet_status(bet_id, status, extra))
+            else:
+                bet = self.get_bet(bet_id)
+                if bet:
+                    asyncio.ensure_future(self.redis.save_bet(bet))
+        self._persist_to_db(self.get_bet(bet_id))
+
+    def _persist_to_db(self, bet: dict | None) -> None:
+        if not bet:
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._async_persist_to_db(bet))
+        except RuntimeError:
+            pass
+
+    async def _async_persist_to_db(self, bet: dict) -> None:
+        try:
+            from app.db.session import async_session
+            from app.db.models import Bet as BetModel
+            from sqlalchemy import select
+            async with async_session() as s:
+                existing = (await s.execute(select(BetModel).where(BetModel.bet_id == bet["id"]))).scalar_one_or_none()
+                if existing:
+                    existing.status = bet.get("status", existing.status)
+                    existing.stake_amount = bet.get("amount", existing.stake_amount)
+                    existing.opponent_username = bet.get("opponent", existing.opponent_username)
+                    existing.creator_wallet = bet.get("creator_wallet", existing.creator_wallet)
+                    existing.opponent_wallet = bet.get("opponent_wallet", existing.opponent_wallet)
+                    existing.payment_reference = bet.get("payment_reference", existing.payment_reference)
+                    existing.tx_signature = bet.get("tx_signature", existing.tx_signature)
+                    existing.winner = bet.get("winner", existing.winner)
+                    import time
+                    status = bet.get("status")
+                    if status == "called":
+                        existing.accepted_at = bet.get("accepted_at", int(time.time()))
+                    elif status in ("resolved", "void"):
+                        existing.settled_at = bet.get("settled_at", int(time.time()))
+                    elif status == "void" and bet.get("creator") == existing.creator_username:
+                        import datetime
+                        existing.cancelled_at = datetime.datetime.now(datetime.timezone.utc)
+                else:
+                    s.add(BetModel(
+                        bet_id=bet["id"],
+                        creator_username=bet.get("creator", ""),
+                        opponent_username=bet.get("opponent"),
+                        chat_id=bet.get("chat_id"),
+                        fixture_id=bet.get("fixture_id", ""),
+                        market=bet.get("market", ""),
+                        stake_amount=bet.get("amount", 0),
+                        stake_token="USDC",
+                        status=bet.get("status", "open"),
+                        payment_reference=bet.get("payment_reference"),
+                    ))
+                await s.commit()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"db_persist_bet_failed bet_id={bet.get('id')}: {e}")
+
+    async def load_from_db(self) -> None:
+        pass  # DB queried on-demand via get_bet / get_bets_for_user
 
     def get_bet(self, bet_id: str) -> dict | None:
-        return self._bets.get(bet_id)
+        bet = self._bets.get(bet_id)
+        if bet:
+            return bet
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._load_bet_from_db(bet_id))
+        except RuntimeError:
+            return None
+        return None
+
+    async def get_bet_async(self, bet_id: str) -> dict | None:
+        bet = self._bets.get(bet_id)
+        if bet:
+            return bet
+        return await self._load_bet_from_db(bet_id)
+
+    async def _load_bet_from_db(self, bet_id: str) -> dict | None:
+        try:
+            from app.db.session import async_session
+            from app.db.models import Bet as BetModel
+            from sqlalchemy import select
+            async with async_session() as s:
+                row = (await s.execute(select(BetModel).where(BetModel.bet_id == bet_id))).scalar_one_or_none()
+                if not row:
+                    return None
+                bet = self._row_to_bet(row)
+                return bet
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"db_load_bet_failed bet_id={bet_id}: {e}")
+            return None
+
+    async def find_bet_by_prefix(self, prefix: str) -> dict | None:
+        for bid, bet in self._bets.items():
+            if bid.startswith(prefix):
+                return bet
+        try:
+            from app.db.session import async_session
+            from app.db.models import Bet as BetModel
+            from sqlalchemy import select
+            async with async_session() as s:
+                rows = (await s.execute(select(BetModel).where(BetModel.bet_id.startswith(prefix)))).scalars().all()
+                if rows:
+                    return self._row_to_bet(rows[0])
+        except Exception:
+            pass
+        return None
+
+    def _row_to_bet(self, row) -> dict:
+        bet = {
+            "id": row.bet_id,
+            "creator": row.creator_username,
+            "opponent": row.opponent_username,
+            "chat_id": row.chat_id,
+            "fixture_id": row.fixture_id,
+            "market": row.market,
+            "amount": row.stake_amount,
+            "status": row.status,
+            "winner": row.winner,
+            "payment_reference": row.payment_reference,
+            "tx_signature": row.tx_signature,
+            "creator_wallet": row.creator_wallet,
+            "opponent_wallet": row.opponent_wallet,
+            "created_at": int(row.created_at.timestamp()) if row.created_at else 0,
+        }
+        self._bets[row.bet_id] = bet
+        return bet
 
     def get_leaderboard(self, chat_id: int) -> dict[str, dict[str, int]]:
         stats: dict[str, dict[str, int]] = {}
         for bet in self._bets.values():
-            if bet.get("chat_id") == chat_id and bet["status"] == BET_STATUS_RESOLVED:
+            if bet.get("chat_id") == chat_id and bet.get("status") == BET_STATUS_RESOLVED:
                 winner = bet.get("winner", "")
                 loser = bet.get("opponent") if bet.get("winner") == bet.get("creator") else bet.get("creator")
                 if winner:

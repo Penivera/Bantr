@@ -12,11 +12,13 @@ logger = get_logger(__name__)
 PROGRAM_ID = Pubkey.from_string(settings.bet_escrow_program_id)
 
 # Account discriminator for BetEscrow (first 8 bytes of sha256("account:BetEscrow"))
-BET_ESCROW_DISCRIMINATOR = bytes([198, 247, 82, 132, 85, 253, 182, 140])
+BET_ESCROW_DISCRIMINATOR = bytes([212, 33, 164, 43, 121, 44, 43, 71])
 
 # Instruction discriminators (first 8 bytes of sha256("global:<instruction_name>"))
 IX_INITIALIZE_BET = bytes([195, 185, 122, 189, 203, 104, 43, 57])
 IX_JOIN_BET = bytes([69, 116, 82, 26, 144, 192, 58, 238])
+IX_REFUND_EXPIRED = bytes([118, 153, 164, 244, 40, 128, 242, 250])
+IX_CANCEL_BET = bytes([17, 248, 130, 128, 153, 227, 231, 9])
 
 
 def derive_bet_pda(bet_id: str) -> tuple[Pubkey, int]:
@@ -29,6 +31,71 @@ def derive_bet_pda(bet_id: str) -> tuple[Pubkey, int]:
 
 def derive_vault_pda(bet_pda: Pubkey) -> tuple[Pubkey, int]:
     return Pubkey.find_program_address([b"bet_vault", bytes(bet_pda)], PROGRAM_ID)
+
+
+async def fetch_bet_from_chain(bet_id: str) -> dict | None:
+    """Fetch and parse a BetEscrow account from devnet by bet ID string."""
+    import httpx, hashlib as _h, struct as _s
+    bid = int(_h.sha256(bet_id.encode()).hexdigest()[:16], 16) % (2**64)
+    buf = _s.pack("<Q", bid)
+    bet_pda, _ = Pubkey.find_program_address([b"bet", buf], PROGRAM_ID)
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(settings.solana_rpc_url, json={
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getAccountInfo",
+            "params": [str(bet_pda), {"encoding": "base64"}],
+        })
+        result = resp.json().get("result", {}).get("value")
+        if not result or not result.get("data"):
+            return None
+
+        raw = base64.b64decode(result["data"][0])
+        if raw[:8] != BET_ESCROW_DISCRIMINATOR:
+            return None
+
+    offset = 8
+    chain_bet_id = _s.unpack_from("<Q", raw, offset)[0]; offset += 8
+    creator = str(Pubkey(raw[offset:offset+32])); offset += 32
+    opp_flag = raw[offset]; offset += 1
+    if opp_flag == 1:
+        opponent = str(Pubkey(raw[offset:offset+32])); offset += 32
+    else:
+        opponent = None
+    stake_mint = str(Pubkey(raw[offset:offset+32])); offset += 32
+    creator_amount = _s.unpack_from("<Q", raw, offset)[0]; offset += 8
+    opponent_amount = _s.unpack_from("<Q", raw, offset)[0]; offset += 8
+    market = raw[offset]; offset += 1
+
+    fixture_len = _s.unpack_from("<I", raw, offset)[0]; offset += 4
+    fixture_id = raw[offset:offset+fixture_len].decode("utf-8"); offset += 12
+
+    status_byte = raw[offset]; offset += 1
+    status_map = {0: "open", 1: "funded", 2: "resolved", 3: "refunded"}
+    status = status_map.get(status_byte, "open")
+
+    win_flag = raw[offset]; offset += 1
+    if win_flag == 1:
+        winner = str(Pubkey(raw[offset:offset+32])); offset += 32
+    else:
+        winner = None
+    resolve_deadline = _s.unpack_from("<q", raw, offset)[0]; offset += 8
+    resolver_authority = str(Pubkey(raw[offset:offset+32])); offset += 32
+    bump = raw[offset]; offset += 1
+    vault_bump = raw[offset]; offset += 1
+
+    return {
+        "id": bet_id,
+        "creator": creator,
+        "opponent": opponent,
+        "stake_mint": stake_mint,
+        "amount": creator_amount / 1_000_000,
+        "market": str(market),
+        "fixture_id": fixture_id,
+        "status": status,
+        "winner": winner,
+        "chain_bet_id": chain_bet_id,
+    }
 
 
 def build_transaction_request_url(

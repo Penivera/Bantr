@@ -1,4 +1,12 @@
-FROM python:3.12-slim AS builder
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+FROM python:3.12-slim AS python-builder
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
@@ -9,9 +17,10 @@ FROM python:3.12-slim AS runtime
 RUN groupadd -r banter && useradd -r -g banter banter
 
 WORKDIR /app
-COPY --from=builder /app/.venv /app/.venv
+COPY --from=python-builder /app/.venv /app/.venv
 COPY app/ /app/app/
 COPY main.py /app/
+COPY --from=frontend-builder /frontend/dist /app/app/api/static/spa
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1

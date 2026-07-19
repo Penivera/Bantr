@@ -14,7 +14,7 @@ from solders.sysvar import RENT
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.tokens import get_token_mint, get_token_decimals
-from app.services.payments.solana_pay import derive_bet_pda, derive_vault_pda, IX_INITIALIZE_BET, IX_JOIN_BET
+from app.services.payments.solana_pay import derive_bet_pda, derive_vault_pda, IX_INITIALIZE_BET, IX_JOIN_BET, IX_REFUND_EXPIRED, IX_CANCEL_BET, fetch_bet_from_chain
 from spl.token.constants import TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID
 
 logger = get_logger(__name__)
@@ -96,6 +96,64 @@ def _build_join_bet_ix(
             AccountMeta(pubkey=SYSTEM_PROGRAM_ID, is_signer=False, is_writable=False),
             AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
             AccountMeta(pubkey=RENT, is_signer=False, is_writable=False),
+        ],
+        data=bytes(data),
+    )
+
+
+def _build_refund_ix(
+    bet_pda: Pubkey,
+    vault_pda: Pubkey,
+    caller: Pubkey,
+    creator: Pubkey,
+    opponent: Pubkey,
+    creator_ata: Pubkey,
+    opponent_ata: Pubkey,
+    stake_mint: Pubkey,
+    bet_id: int,
+) -> Instruction:
+    data = bytearray()
+    data += IX_REFUND_EXPIRED
+    data += struct.pack("<Q", bet_id)
+
+    return Instruction(
+        program_id=PROGRAM_ID,
+        accounts=[
+            AccountMeta(pubkey=caller, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=bet_pda, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=vault_pda, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=creator_ata, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=opponent_ata, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=creator, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=opponent, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=stake_mint, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
+        ],
+        data=bytes(data),
+    )
+
+
+def _build_cancel_ix(
+    bet_pda: Pubkey,
+    vault_pda: Pubkey,
+    creator: Pubkey,
+    creator_ata: Pubkey,
+    stake_mint: Pubkey,
+    bet_id: int,
+) -> Instruction:
+    data = bytearray()
+    data += IX_CANCEL_BET
+    data += struct.pack("<Q", bet_id)
+
+    return Instruction(
+        program_id=PROGRAM_ID,
+        accounts=[
+            AccountMeta(pubkey=creator, is_signer=True, is_writable=True),
+            AccountMeta(pubkey=bet_pda, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=vault_pda, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=creator_ata, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=stake_mint, is_signer=False, is_writable=False),
+            AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
         ],
         data=bytes(data),
     )
@@ -196,6 +254,31 @@ async def solana_pay_transaction(
     if instruction == "join_bet":
         instructions.append(_build_join_bet_ix(
             bet_pda, vault_pda, payer, payer_ata, stake_mint, bid_hash,
+        ))
+    elif instruction == "refund_expired":
+        chain_bet = await fetch_bet_from_chain(bet_id)
+        if not chain_bet:
+            raise HTTPException(status_code=400, detail="No escrowed funds to refund")
+        creator_pk = Pubkey.from_string(chain_bet["creator"])
+        has_opponent = bool(chain_bet.get("opponent"))
+        if has_opponent:
+            opponent_pk = Pubkey.from_string(chain_bet["opponent"])
+        else:
+            opponent_pk = Pubkey.from_string("11111111111111111111111111111111")
+        creator_ata = _derive_ata(creator_pk, stake_mint)
+        opponent_ata = _derive_ata(opponent_pk, stake_mint)
+        instructions.append(_build_refund_ix(
+            bet_pda, vault_pda, payer, creator_pk, opponent_pk,
+            creator_ata, opponent_ata, stake_mint, bid_hash,
+        ))
+    elif instruction == "cancel_bet":
+        chain_bet = await fetch_bet_from_chain(bet_id)
+        if not chain_bet:
+            raise HTTPException(status_code=400, detail="No escrowed funds to refund")
+        creator_pk = Pubkey.from_string(chain_bet["creator"])
+        creator_ata = _derive_ata(creator_pk, stake_mint)
+        instructions.append(_build_cancel_ix(
+            bet_pda, vault_pda, creator_pk, creator_ata, stake_mint, bid_hash,
         ))
     else:
         instructions.append(_build_initialize_bet_ix(

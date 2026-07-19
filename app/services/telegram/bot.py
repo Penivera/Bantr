@@ -22,7 +22,8 @@ logger = get_logger(__name__)
 REPLY_KEYBOARD = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="\u26bd Fixtures"), KeyboardButton(text="\U0001f3af Track")],
-        [KeyboardButton(text="\U0001f4b0 Bet"), KeyboardButton(text="\U0001f3c6 Leaderboard")],
+        [KeyboardButton(text="\U0001f4b0 Bet"), KeyboardButton(text="\U0001f4cb Bets")],
+        [KeyboardButton(text="\U0001f3c6 Leaderboard"), KeyboardButton(text="\U0001f4e8 Challenges")],
         [KeyboardButton(text="\u2753 Help")],
     ],
     resize_keyboard=True,
@@ -31,7 +32,8 @@ REPLY_KEYBOARD = ReplyKeyboardMarkup(
 
 KEYBOARD_MAP: dict[str, str] = {
     "\u26bd Fixtures": "fixtures", "\U0001f3af Track": "track",
-    "\U0001f4b0 Bet": "bet", "\U0001f3c6 Leaderboard": "leaderboard",
+    "\U0001f4b0 Bet": "bet", "\U0001f4cb Bets": "bets",
+    "\U0001f3c6 Leaderboard": "leaderboard", "\U0001f4e8 Challenges": "challenges",
     "\u2753 Help": "help",
 }
 
@@ -79,6 +81,9 @@ ALIASES: dict[str, str] = {
     "help": "help", "commands": "help", "what can you do": "help",
     "how does this work": "help", "how to bet": "help",
     "track": "track", "track match": "track", "select match": "track", "pick match": "track",
+    "bets": "bets", "my bets": "bets", "show bets": "bets", "active": "bets",
+    "challenges": "challenges", "incoming": "challenges", "pending bets": "challenges",
+    "history": "history", "settled": "history", "completed": "history",
 }
 
 BET_MARKET_MAP: dict[str, str] = {
@@ -164,7 +169,11 @@ HELP_TEXT = """\U0001f4d6 *Available Commands*
 \U0001f3af /track — Select which fixture to bet on
 \U0001f4b0 /bet @user <market> <amount> — Challenge someone
 \u2705 /call <bet_id> — Accept a pending bet
+\U0001f4cb /bets — View your active bets
+\U0001f4e8 /challenges — View incoming challenges
 \U0001f3c6 /leaderboard — View rankings
+\U0001f4dc /history — View settled bet history
+\u274c /cancel <id> — Cancel a pending bet
 
 *Standard markets:* """ + ", ".join(_fmt_market(m) for m in ["next_goal", "next_card", "next_corner", "match_winner"]) + """
 
@@ -198,7 +207,9 @@ class TelegramBot:
         return str(user.id) if user else "unknown"
 
     async def _reply(self, event, text: str, **kwargs) -> types.Message:
-        return await event.answer(text, reply_markup=REPLY_KEYBOARD, **kwargs)
+        if "reply_markup" not in kwargs:
+            kwargs["reply_markup"] = REPLY_KEYBOARD
+        return await event.answer(text, **kwargs)
 
     def _tracked_label(self, chat_id: int) -> str | None:
         engine = self.container.engine
@@ -363,19 +374,37 @@ class TelegramBot:
             pay_req = await payments.generate_payment_request(bet)
             store.update_bet(bet["id"], {"payment_reference": pay_req["reference"]})
             engine.active_bets[bet["id"]]["payment_reference"] = pay_req["reference"]
+
+            from app.api.routes.payments import PaymentRecord, create_payment_id, store_payment
+            from app.core.tokens import get_token_mint
+            is_devnet = "devnet" in settings.solana_rpc_url
+            payment_id = create_payment_id()
+            store_payment(PaymentRecord(
+                payment_id=payment_id, bet_id=bet["id"], amount=float(amount),
+                token_symbol=settings.bet_payment_token_symbol,
+                token_mint=str(get_token_mint(settings.bet_payment_token_symbol, devnet=is_devnet)),
+                recipient=str(pay_req["reference"]),
+                instruction="initialize_bet",
+            ))
+            web_url = f"{settings.app_base_url.rstrip('/')}/pay?payment_id={payment_id}"
+
             tracked = self._tracked_label(chat_id) or "?"
             resolve_note = "Resolves at full time — winner takes all." if market_str == MARKET_MATCH_WINNER else ""
             msg = (f"{opponent} \U0001f525 {username} challenges you!\n"
                    f"{tracked} | {market_str} | Stake: {amount}"
                    f"{team_note}\n{resolve_note}\n\n"
                    f"\U0001f4b3 Scan QR or <a href=\"{pay_req['transaction_request_url']}\">tap to pay</a>\n\n"
-                   f"Accept: /call <code>{bet['id'][:4]}</code>")
+                   f"Accept: /call <code>{bet['id']}</code>")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="\U0001f4f1 Scan QR (Solana Pay)", url=pay_req["https_url"])],
+                [InlineKeyboardButton(text="\U0001f4bb Connect Wallet", url=web_url)],
+            ])
             if pay_req.get("qr_png"):
                 from aiogram.types import BufferedInputFile
                 photo = BufferedInputFile(pay_req["qr_png"], filename="payment.png")
-                await message.answer_photo(photo, caption=msg, parse_mode="HTML")
+                await message.answer_photo(photo, caption=msg, parse_mode="HTML", reply_markup=kb)
             else:
-                await message.answer(msg, parse_mode="HTML")
+                await message.answer(msg, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
             await self._reply(message, f"Bet created but payment setup failed: {e}")
 
@@ -434,6 +463,323 @@ class TelegramBot:
         for user, s in entries:
             lines.append(f"{user}: {s['wins']}W — {s['losses']}L")
         await self._reply(message, "\n".join(lines), parse_mode="Markdown")
+
+    # ── /bets ──
+
+    async def cmd_bets(self, message: types.Message) -> None:
+        username = self._username(message)
+        store = self.container.store
+        engine = self.container.engine
+        bets: list[dict] = []
+        if store.redis:
+            bets_data = await store.redis.get_bets_for_user(username)
+            for b in bets_data:
+                if b.get("chat_id") == message.chat.id:
+                    bets.append(b)
+        if not bets:
+            for b in store._bets.values():
+                if b.get("chat_id") == message.chat.id and (b.get("creator") == username or b.get("opponent") == username):
+                    bets.append(b)
+        if not bets:
+            from app.services.payments.solana_pay import fetch_bet_from_chain
+            seen = set()
+            for bid, b in list(engine.active_bets.items()):
+                if bid in seen:
+                    continue
+                seen.add(bid)
+                if b.get("creator") == username or b.get("opponent") == username:
+                    chain_bet = await fetch_bet_from_chain(bid)
+                    if chain_bet:
+                        chain_bet["chat_id"] = b.get("chat_id", message.chat.id)
+                        chain_bet["id"] = bid
+                        bets.append(chain_bet)
+        if not bets:
+            await self._reply(message, "No bets found. Start one with /bet!")
+            return
+        await self._show_bets(message, bets, username)
+
+    async def _show_bets(self, msg, bets: list[dict], username: str) -> None:
+        from app.core.constants import BET_STATUS_OPEN, BET_STATUS_CALLED, BET_STATUS_RESOLVED, BET_STATUS_VOID
+        pending = [b for b in bets if b.get("status") == BET_STATUS_OPEN and b.get("creator") == username]
+        challenges = [b for b in bets if b.get("status") == BET_STATUS_OPEN and b.get("opponent") == username]
+        active = [b for b in bets if b.get("status") in (BET_STATUS_CALLED, "funded")]
+        settled = [b for b in bets if b.get("status") in (BET_STATUS_RESOLVED, BET_STATUS_VOID)]
+
+        lines = ["\U0001f4cb *My Bets*", ""]
+        if pending:
+            lines.append("\U0001f7e1 *Pending*")
+            for b in pending[:5]:
+                lines.append(self._bet_line(b, username))
+            lines.append("")
+        if challenges:
+            lines.append("\U0001f4e8 *Challenges*")
+            for b in challenges[:5]:
+                lines.append(self._bet_line(b, username))
+            lines.append("")
+        if active:
+            lines.append("\U0001f7e2 *Active*")
+            for b in active[:5]:
+                lines.append(self._bet_line(b, username))
+            lines.append("")
+        if settled:
+            lines.append("\U0001f3c1 *Settled*")
+            for b in settled[:5]:
+                w = b.get("winner")
+                icon = "\u2705 Won" if w == username else ("\u274c Lost" if w else "\u26d4 Void")
+                lines.append(f"{self._bet_line(b, username)} {icon}")
+        if not lines[2:]:
+            lines.append("No bets found.")
+
+        kb = self._bet_keyboard(pending, challenges, active)
+        await msg.answer("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+
+    def _bet_line(self, bet: dict, username: str) -> str:
+        stake = bet.get("amount", 0)
+        market = bet.get("market", "?").replace("_", " ").title()
+        other = bet.get("opponent") if bet.get("creator") == username else bet.get("creator")
+        return f"\u2022 {market} vs {other} ({stake} USDC) \u2014 `/details {bet['id']}`"
+
+    def _bet_keyboard(self, pending, challenges, active) -> InlineKeyboardMarkup:
+        kb = []
+        for b in pending[:3]:
+            kb.append([InlineKeyboardButton(text=f"\u274c Cancel {b['id']}", callback_data=f"bet:cancel:{b['id']}")])
+        for b in challenges[:3]:
+            kb.append([
+                InlineKeyboardButton(text=f"\u2705 Accept {b['id']}", callback_data=f"bet:accept:{b['id']}"),
+                InlineKeyboardButton(text=f"\u274c Decline {b['id']}", callback_data=f"bet:decline:{b['id']}"),
+            ])
+        for b in active[:3]:
+            kb.append([InlineKeyboardButton(text=f"\U0001f4c4 Details {b['id']}", callback_data=f"bet:details:{b['id']}")])
+        if not kb:
+            kb.append([InlineKeyboardButton(text="\u26bd Fixtures", callback_data="menu:fixtures")])
+        return InlineKeyboardMarkup(inline_keyboard=kb)
+
+    # ── /challenges ──
+
+    async def cmd_challenges(self, message: types.Message) -> None:
+        username = self._username(message)
+        store = self.container.store
+        bets = []
+        if store.redis:
+            bets = await store.redis.get_challenges_for_user(username)
+            bets = [b for b in bets if b.get("chat_id") == message.chat.id]
+        if not bets:
+            for b in store._bets.values():
+                if b.get("opponent") == username and b.get("chat_id") == message.chat.id and b.get("status") == "open":
+                    bets.append(b)
+        if not bets:
+            await self._reply(message, "No pending challenges.")
+            return
+        lines = ["\U0001f4e8 *Pending Challenges*", ""]
+        for b in bets[:5]:
+            stake = b.get("amount", 0)
+            market = b.get("market", "?").replace("_", " ").title()
+            creator = b.get("creator", "?")
+            lines.append(f"{creator} challenged you")
+            lines.append(f"{market} \u2014 {stake} USDC")
+            lines.append(f"/call {b['id']} to accept")
+            lines.append("")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"\u2705 Accept {b['id']}", callback_data=f"bet:accept:{b['id']}")]
+            for b in bets[:5]
+        ])
+        await self._reply(message, "\n".join(lines), reply_markup=kb)
+
+    # ── /history ──
+
+    async def cmd_history(self, message: types.Message) -> None:
+        username = self._username(message)
+        store = self.container.store
+        all_bets = []
+        if store.redis:
+            all_bets = await store.redis.get_bets_for_user(username)
+            all_bets = [b for b in all_bets if b.get("chat_id") == message.chat.id]
+        if not all_bets:
+            for b in store._bets.values():
+                if b.get("chat_id") == message.chat.id and (b.get("creator") == username or b.get("opponent") == username):
+                    all_bets.append(b)
+        settled = [b for b in all_bets if b.get("status") in ("resolved", "void")]
+        if not settled:
+            await self._reply(message, "No settled bets yet.")
+            return
+        lines = ["\U0001f3c1 *Bet History*", ""]
+        for b in settled[-10:]:
+            w = b.get("winner")
+            icon = "\u2705 Won" if w == username else ("\u274c Lost" if w else "\u26d4 Void")
+            stake = b.get("amount", 0)
+            market = b.get("market", "?").replace("_", " ").title()
+            other = b.get("opponent") if b.get("creator") == username else b.get("creator")
+            lines.append(f"{icon} | {market} vs {other} ({stake} USDC)")
+        await self._reply(message, "\n".join(lines))
+
+    # ── /cancel ──
+
+    async def cmd_cancel(self, message: types.Message) -> None:
+        username = self._username(message)
+        args = message.text.split()[1:] if message.text else []
+        if not args:
+            await self._reply(message, "Usage: /cancel <bet_id>")
+            return
+        partial = args[0].strip().lower()
+        store = self.container.store
+        engine = self.container.engine
+        bet = None
+        for bid, b in engine.active_bets.items():
+            if bid.startswith(partial) and b.get("creator") == username:
+                bet = b; partial = bid; break
+        if not bet:
+            bet = store.get_bet(partial)
+        if not bet:
+            bet = await store.find_bet_by_prefix(partial)
+            if bet:
+                partial = bet["id"]
+        if not bet or bet.get("creator") != username:
+            await self._reply(message, "Bet not found or you're not the creator.")
+            return
+        if bet.get("status") not in ("open",):
+            await self._reply(message, "Can only cancel pending (unaccepted) bets.")
+            return
+
+        store.update_bet(partial, {"status": "void", "winner": None})
+        if partial in engine.active_bets:
+            engine.active_bets.pop(partial, None)
+
+        from app.services.payments.solana_pay import fetch_bet_from_chain
+        on_chain = await fetch_bet_from_chain(partial)
+
+        if on_chain:
+            from app.api.routes.payments import PaymentRecord, create_payment_id, store_refund
+            from app.core.tokens import get_token_mint
+            is_devnet = "devnet" in settings.solana_rpc_url
+            refund_id = create_payment_id()
+            store_refund(PaymentRecord(
+                payment_id=refund_id, bet_id=partial, amount=float(bet.get("amount", 0)),
+                token_symbol=settings.bet_payment_token_symbol,
+                token_mint=str(get_token_mint(settings.bet_payment_token_symbol, devnet=is_devnet)),
+                recipient=bet.get("creator", ""), instruction="cancel_bet",
+            ))
+            refund_url = f"{settings.app_base_url.rstrip('/')}/refund?refund_id={refund_id}"
+            msg = (f"\u274c Bet `{partial}` cancelled.\n\n"
+                   f"Your escrowed funds are ready to be claimed.")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="\U0001f4b0 Claim Refund", url=refund_url)],
+            ])
+        else:
+            msg = (f"\u274c Bet `{partial}` cancelled.\n\n"
+                   f"No funds were escrowed — nothing to refund.")
+            kb = None
+
+        await self._reply(message, msg, **({"reply_markup": kb} if kb else {}))
+
+    # ── Inline bet actions ──
+
+    async def handle_bet_action(self, callback: CallbackQuery) -> None:
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        data = callback.data or ""
+        parts = data.split(":")
+        if len(parts) < 3:
+            return
+        action, bid = parts[1], parts[2]
+        username = self._username(callback)
+        store = self.container.store
+        engine = self.container.engine
+        bet = engine.active_bets.get(bid) or store.get_bet(bid)
+        if not bet:
+            await callback.message.edit_text("Bet not found.", reply_markup=None)
+            return
+
+        if action == "details":
+            await self._show_bet_details(callback, bet, username)
+        elif action == "accept":
+            await self._accept_bet_inline(callback, bet, username)
+        elif action == "decline":
+            await self._decline_bet_inline(callback, bet, username)
+        elif action == "cancel":
+            await self._cancel_bet_inline(callback, bet, username)
+
+    async def _show_bet_details(self, callback, bet: dict, username: str) -> None:
+        status = bet.get("status", "?").title()
+        market = bet.get("market", "?").replace("_", " ").title()
+        stake = bet.get("amount", 0)
+        opponent = bet.get("opponent", "?")
+        creator = bet.get("creator", "?")
+        winner = bet.get("winner", "-")
+        tx = bet.get("payment_reference", "-")
+        fixture = bet.get("fixture_id", "?")
+        lines = [
+            f"\U0001f4c4 *Bet {bet['id']}*",
+            f"Market: {market}",
+            f"Creator: {creator}",
+            f"Opponent: {opponent}",
+            f"Stake: {stake} USDC",
+            f"Status: {status}",
+            f"Fixture: {fixture}",
+        ]
+        if winner and winner != "-":
+            lines.append(f"Winner: {winner}")
+        if tx and tx != "-":
+            lines.append(f"Ref: `{tx}...`")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="\U0001f519 Back", callback_data="menu:start")],
+        ])
+        await callback.message.edit_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+
+    async def _accept_bet_inline(self, callback, bet: dict, username: str) -> None:
+        if bet.get("status") != "open":
+            await callback.answer("Bet is no longer open.", show_alert=True)
+            return
+        if bet.get("opponent") != username:
+            await callback.answer("Only the challenged user can accept.", show_alert=True)
+            return
+        store = self.container.store
+        payments = self.container.payments
+        engine = self.container.engine
+        store.update_bet(bet["id"], {"status": "called"})
+        if bet["id"] in engine.active_bets:
+            engine.active_bets[bet["id"]]["status"] = "called"
+        try:
+            opp_pay = await payments.generate_payment_request(bet, instruction="join_bet")
+            msg = f"\u2705 Accepted!\n\U0001f4b3 Scan QR or <a href=\"{opp_pay['transaction_request_url']}\">tap to pay</a>"
+            if opp_pay.get("qr_png"):
+                from aiogram.types import BufferedInputFile
+                photo = BufferedInputFile(opp_pay["qr_png"], filename="payment.png")
+                await callback.message.answer_photo(photo, caption=msg, parse_mode="HTML")
+            else:
+                await callback.message.answer(msg, parse_mode="HTML")
+        except Exception as e:
+            pass
+        await callback.message.edit_text(f"\u2705 Bet `{bet['id']}` accepted!", reply_markup=None)
+
+    async def _decline_bet_inline(self, callback, bet: dict, username: str) -> None:
+        if bet.get("status") != "open":
+            await callback.answer("Bet is no longer open.", show_alert=True)
+            return
+        if bet.get("opponent") != username:
+            await callback.answer("Only the challenged user can decline.", show_alert=True)
+            return
+        store = self.container.store
+        engine = self.container.engine
+        store.update_bet(bet["id"], {"status": "void"})
+        if bet["id"] in engine.active_bets:
+            engine.active_bets.pop(bet["id"], None)
+        await callback.message.edit_text(f"\u274c Challenge from {bet.get('creator')} declined.", reply_markup=None)
+
+    async def _cancel_bet_inline(self, callback, bet: dict, username: str) -> None:
+        if bet.get("status") != "open":
+            await callback.answer("Can only cancel pending bets.", show_alert=True)
+            return
+        if bet.get("creator") != username:
+            await callback.answer("Only the creator can cancel.", show_alert=True)
+            return
+        store = self.container.store
+        engine = self.container.engine
+        store.update_bet(bet["id"], {"status": "void"})
+        if bet["id"] in engine.active_bets:
+            engine.active_bets.pop(bet["id"], None)
+        await callback.message.edit_text(f"\u274c Bet `{bet['id']}` cancelled.", reply_markup=None)
 
     # ── Callback handler ──
 
@@ -586,6 +932,9 @@ class TelegramBot:
             elif cmd == "track": await self.cmd_track(message)
             elif cmd == "leaderboard": await self.cmd_leaderboard(message)
             elif cmd == "help": await self.cmd_help(message)
+            elif cmd == "bets": await self.cmd_bets(message)
+            elif cmd == "challenges": await self.cmd_challenges(message)
+            elif cmd == "history": await self.cmd_history(message)
             elif cmd == "bet":
                 await self._reply(message, "Use /bet @user <market> <amount> to challenge someone!")
             return
@@ -599,6 +948,9 @@ class TelegramBot:
             elif cmd == "track": await self.cmd_track(message)
             elif cmd == "leaderboard": await self.cmd_leaderboard(message)
             elif cmd == "help": await self.cmd_help(message)
+            elif cmd == "bets": await self.cmd_bets(message)
+            elif cmd == "challenges": await self.cmd_challenges(message)
+            elif cmd == "history": await self.cmd_history(message)
             return
 
         # ── Everything else bet-like: unified flow with ack message ──
@@ -703,7 +1055,12 @@ class TelegramBot:
         r.message.register(self.cmd_bet, Command("bantr"))
         r.message.register(self.cmd_call, Command("call"))
         r.message.register(self.cmd_leaderboard, Command("leaderboard"))
+        r.message.register(self.cmd_bets, Command("bets"))
+        r.message.register(self.cmd_challenges, Command("challenges"))
+        r.message.register(self.cmd_history, Command("history"))
+        r.message.register(self.cmd_cancel, Command("cancel"))
         r.callback_query.register(self.handle_callback, F.data.startswith("menu:"))
+        r.callback_query.register(self.handle_bet_action, F.data.startswith("bet:"))
         r.callback_query.register(self.handle_poll_vote, F.data.startswith("poll:vote:"))
 
         @r.message()

@@ -38,4 +38,8 @@ pub mod bet_escrow {
     pub fn refund_expired(ctx: Context<RefundExpired>, bet_id: u64) -> Result<()> {
         refund::handler(ctx, bet_id)
     }
+
+    pub fn cancel_bet(ctx: Context<CancelBet>, bet_id: u64) -> Result<()> {
+        cancel::handler(ctx, bet_id)
+    }
 }

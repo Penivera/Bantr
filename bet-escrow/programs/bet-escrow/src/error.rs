@@ -22,4 +22,6 @@ pub enum ErrorCode {
     OpponentMismatch,
     #[msg("Opponent stake must match creator stake")]
     StakeMismatch,
+    #[msg("Only the bet creator can perform this action")]
+    NotCreator,
 }

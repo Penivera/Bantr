@@ -22,7 +22,7 @@ TOKENS: dict[SupportedToken, TokenConfig] = {
     SupportedToken.USDC: TokenConfig(
         symbol=SupportedToken.USDC,
         decimals=6,
-        mint_devnet=Pubkey.from_string("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"),
+        mint_devnet=Pubkey.from_string("Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr"),
         mint_mainnet=Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
     ),
 }

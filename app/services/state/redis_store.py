@@ -77,3 +77,96 @@ class RedisStore:
 
     async def get_all_tracked(self) -> set[str]:
         return await self.client.smembers(self._k("tracked"))
+
+    # ── bets (persistent index) ──
+
+    async def save_bet(self, bet: dict) -> None:
+        import json
+        bet_id = bet["id"]
+        serializable = {k: v for k, v in bet.items() if v is not None}
+        await self.client.hset(self._k("bet", bet_id), mapping={
+            k: json.dumps(v) if not isinstance(v, (str, int, float, bool)) else v
+            for k, v in serializable.items()
+        })
+        creator = bet.get("creator")
+        opponent = bet.get("opponent")
+        chat_id = bet.get("chat_id")
+        status = bet.get("status", "open")
+        if creator:
+            await self.client.sadd(self._k("bet", "by_creator", creator), bet_id)
+        if opponent:
+            await self.client.sadd(self._k("bet", "by_opponent", opponent), bet_id)
+        if chat_id is not None:
+            await self.client.sadd(self._k("bet", "by_chat", str(chat_id)), bet_id)
+        await self.client.sadd(self._k("bet", "by_status", status), bet_id)
+
+    async def update_bet_status(self, bet_id: str, status: str, extra: dict | None = None) -> None:
+        import json
+        bet = await self.get_bet(bet_id)
+        if not bet:
+            return
+        old_status = bet.get("status", "open")
+        if old_status != status:
+            await self.client.srem(self._k("bet", "by_status", old_status), bet_id)
+            await self.client.sadd(self._k("bet", "by_status", status), bet_id)
+        patch = {"status": status}
+        if extra:
+            patch.update(extra)
+        for k, v in patch.items():
+            val = json.dumps(v) if not isinstance(v, (str, int, float, bool)) else str(v)
+            await self.client.hset(self._k("bet", bet_id), k, val)
+
+    async def get_bet(self, bet_id: str) -> dict | None:
+        import json
+        raw = await self.client.hgetall(self._k("bet", bet_id))
+        if not raw:
+            return None
+        bet = {}
+        for k, v in raw.items():
+            try:
+                bet[k] = json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                bet[k] = v
+        bet["id"] = bet_id
+        return bet
+
+    async def get_bets_for_user(self, username: str) -> list[dict]:
+        creator_ids = await self.client.smembers(self._k("bet", "by_creator", username))
+        opponent_ids = await self.client.smembers(self._k("bet", "by_opponent", username))
+        all_ids = set(creator_ids) | set(opponent_ids)
+        bets = []
+        for bid in all_ids:
+            bet = await self.get_bet(bid)
+            if bet:
+                bets.append(bet)
+        return sorted(bets, key=lambda b: b.get("created_at", ""), reverse=True)
+
+    async def get_bets_for_chat(self, chat_id: int, status: str | None = None) -> list[dict]:
+        chat_ids = await self.client.smembers(self._k("bet", "by_chat", str(chat_id)))
+        if status:
+            status_ids = await self.client.smembers(self._k("bet", "by_status", status))
+            chat_ids = chat_ids & status_ids
+        bets = []
+        for bid in chat_ids:
+            bet = await self.get_bet(bid)
+            if bet:
+                bets.append(bet)
+        return sorted(bets, key=lambda b: b.get("created_at", ""), reverse=True)
+
+    async def get_challenges_for_user(self, username: str) -> list[dict]:
+        opponent_ids = await self.client.smembers(self._k("bet", "by_opponent", username))
+        bets = []
+        for bid in opponent_ids:
+            bet = await self.get_bet(bid)
+            if bet and bet.get("status") == "open":
+                bets.append(bet)
+        return sorted(bets, key=lambda b: b.get("created_at", ""), reverse=True)
+
+    async def get_pending_count(self, username: str) -> int:
+        opponent_ids = await self.client.smembers(self._k("bet", "by_opponent", username))
+        count = 0
+        for bid in opponent_ids:
+            raw = await self.client.hget(self._k("bet", bid), "status")
+            if raw and '"open"' in raw:
+                count += 1
+        return count

@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # BetEscrow
     bet_escrow_program_id: str = Field(default="vaFdYpqXffc1QXpL1AauMpvAknBNjrdZYExMQg6wvgM", description="Bet Escrow Program ID")
-    bet_payment_token_mint: str = Field(default="4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", description="Payment Token Mint")
+    bet_payment_token_mint: str = Field(default="Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr", description="Payment Token Mint")
     bet_payment_token_symbol: str = Field(default="USDC", description="Payment Token Symbol")
 
     # App
@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     app_debug: bool = Field(default=True, description="App Debug Mode")
     app_webhook_url: str = Field(default="https://usebantr.site", description="App Webhook URL")
     app_base_url: str = Field(default="https://usebantr.site", description="App Base URL")
+    database_url: str = Field(default="postgresql://postgres:admin@localhost:5432/bantr", description="Database URL")
     app_redis_url: str = Field(default="redis://localhost:6379", description="App Redis URL")
 
 

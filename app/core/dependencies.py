@@ -22,8 +22,17 @@ class AppContainer:
 
     async def initialize(self) -> None:
         from app.core.security import WALLET, WALLET_PUBKEY
+        from app.db.session import init_db
         self.redis = RedisStore()
         await self.redis.connect()
+        self.store.redis = self.redis
+
+        try:
+            await init_db()
+            await self.store.load_from_db()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("db_init_failed — running without database")
 
         self.credentials = await bootstrap_credentials(WALLET)
         self.stream = TxLineStreamClient(self.credentials)

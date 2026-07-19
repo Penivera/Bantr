@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from app.core.config import settings
@@ -15,6 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 templates_dir = str(BASE_DIR / "templates")
 jinja_env = Environment(loader=FileSystemLoader(templates_dir))
 static_dir = str(BASE_DIR / "static")
+spa_dir = str(BASE_DIR / "static" / "spa")
 
 
 def render_template(name: str, **kwargs) -> str:
@@ -34,11 +35,24 @@ def create_app(lifespan=None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     from app.api.routes.pay import router as pay_router
+    from app.api.routes.payments import payments_router
     app.include_router(pay_router)
+    app.include_router(payments_router)
 
-    @app.get("/", response_class=HTMLResponse)
-    async def index():
+    @app.get("/")
+    async def index(request: Request):
+        if Path(spa_dir, "index.html").exists():
+            return FileResponse(Path(spa_dir, "index.html"))
         return render_template("index.html", bot_url=f"https://t.me/{settings.telegram_bot_username}")
+
+    @app.get("/pay")
+    @app.get("/{path:path}")
+    async def spa_fallback(request: Request, path: str = ""):
+        if path.startswith("api/") or path.startswith("static/") or path == "webhook":
+            raise HTTPException(status_code=404)
+        if Path(spa_dir, "index.html").exists():
+            return FileResponse(str(Path(spa_dir, "index.html")))
+        raise HTTPException(status_code=404, detail="Not found")
 
     @app.post("/webhook")
     async def webhook(request: Request):

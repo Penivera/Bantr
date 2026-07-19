@@ -24,3 +24,5 @@ reach-contract/
 CLAUDE.md
 .playwright-cli/
 .fastapicloud/
+frontend/dist/
+frontend/node_modules/

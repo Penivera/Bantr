@@ -206,7 +206,7 @@ class TestAliasMap:
 
     def test_keyboard_buttons(self):
         for _ui_text, cmd in KEYBOARD_MAP.items():
-            assert cmd in ("fixtures", "track", "bet", "leaderboard", "help")
+            assert cmd in ("fixtures", "track", "bet", "bets", "leaderboard", "challenges", "history", "help")
 
     def test_bet_market_map_completeness(self):
         for key, val in BET_MARKET_MAP.items():
@@ -396,7 +396,7 @@ class TestPaymentLink:
                 {"id": "z", "fixture_id": "f", "market": "next_goal", "amount": 3})
         )
         https = result["https_url"]
-        assert "tokenMint=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU" in https
+        assert "tokenMint=Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr" in https
         assert "tokenSymbol=USDC" in https
 
 
