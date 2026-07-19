@@ -720,9 +720,8 @@ class TelegramBot:
         except Exception:
             logger.warning("bot_get_me_failed", fallback=settings.telegram_bot_username)
 
-        await self.bot.delete_webhook(drop_pending_updates=False)
-
         if settings.app_debug:
+            await self.bot.delete_webhook(drop_pending_updates=False)
             await self.dp.start_polling(self.bot, handle_signals=False)
         else:
             url = f"{settings.app_webhook_url.rstrip('/')}/webhook"
